@@ -1,0 +1,5508 @@
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/dma-utils/dmactl.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/dma-utils/dmactl.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/dma-utils/dmactl.c	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/dma-utils/dmactl.c	2021-03-05 07:55:02.000000000 -0600
+@@ -458,6 +458,12 @@
+ 		                     xcmd->req.intr.end_idx);
+ 		xnl_msg_add_int_attr(hdr, XNL_ATTR_RSP_BUF_LEN, dlen);
+ 		break;
++	case XNL_CMD_IOMMU_MAP_PAGE:
++	  	xnl_msg_add_int_attr(hdr, XNL_ATTR_RANGE_START,
++				     xcmd->req.reg.range_start);
++		xnl_msg_add_int_attr(hdr, XNL_ATTR_RANGE_END,
++					xcmd->req.reg.range_end);
++		break;
+         case XNL_CMD_REG_RD:
+ 		xnl_msg_add_int_attr(hdr, XNL_ATTR_REG_BAR_NUM,
+     							 xcmd->req.reg.bar);
+@@ -721,6 +727,15 @@
+ 	return xnl_common_msg_send(cmd, attrs);
+ }
+ 
++int qdma_print_hi(struct xcmd_info *cmd)
++{
++	uint32_t attrs[XNL_ATTR_MAX] = {0};
++
++	printf("Calling Common MSG Send\n");
++	
++	return xnl_common_msg_send(cmd, attrs);
++}
++
+ int qdma_dev_get_global_csr(struct xcmd_info *cmd)
+ {
+ 	uint32_t attrs[XNL_ATTR_MAX] = {0};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/dma-utils/dmautils.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/dma-utils/dmautils.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/dma-utils/dmautils.h	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/dma-utils/dmautils.h	2021-03-05 07:55:02.000000000 -0600
+@@ -396,6 +396,7 @@
+  *
+  *****************************************************************************/
+ int qdma_dev_intr_ring_dump(struct xcmd_info *cmd);
++int qdma_print_hi(struct xcmd_info *cmd);
+ 
+ /*****************************************************************************/
+ /**
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/command_queue.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/command_queue.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/command_queue.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/command_queue.c	2021-03-05 09:24:12.000000000 -0600
+@@ -0,0 +1,129 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++
++struct free_buffer_list {
++  u8 idx;
++  u8 len;
++  struct free_buffer_list * next;
++}
++struct ring_entry{
++  u8 idx;
++  u8 len;
++  u8 type;
++  u8 flags; 
++}
++  
++// type describes command
++
++// type 0 is invalid
++// type 1 is buffer ownership / acknowledge
++// type 2 is create queue
++// type 3 is memory_operation + (optional) payload
++
++struct create_queue {
++  u64 va;
++  u64 rptr;
++};
++  
++struct memory_operation {
++  enum type { READ_UT = 0, WRITE_UT = 1, READ_T=2, WRITE_T=3, TRANSLATE=4};
++  u64 address;
++}
++
++  
++struct ring_entry driver_ring[16];
++struct ring_entry  device_ring[16];
++
++/* where device will read the next entry */
++volatile u8 driver_rptr;
++
++/* where driver will put the next entry */
++volatile u8 driver_wptr;
++
++volatile u8 device_rptr;
++volatile u8 device_wptr;
++
++// indexes into this memory pool. 
++u8 mempool[256];
++
++static struct free_buffer_list * driver_free_buffers;
++
++/* never allow advancement of write pointer to be equal to read pointer - avoids ambiguous full / empty */
++
++void init() {
++  driver_free_buffers = NULL;
++}
++
++void process_driver_queue_range(u8 start_range, u8 end_range) {
++
++  for (unsigned i = start_range ; i < end_range) {
++    process_command(i);
++  }
++  
++}
++
++void process_command(i) {
++
++  switch( command->type) {
++  case MEMORY_OPERATION :
++    // send out descriptor
++    // 
++    break;
++  } 
++  
++}
++
++
++/* on device */
++void poll_driver_command_queue() {
++  u8 shadow_driver_wptr = driver_wptr;
++  u8 shadow_driver_rptr = driver_rptr;
++  
++  // look at driver rptr, and driver wptr.
++  // if rptr < wptr, then entries between rptr...shadow_driver_wptr are valid
++  if (driver_rptr < shadow_driver_wptr) {
++    // process them, incrementing the shadow_rptr;
++    process_driver_queue_range(driver_rptr, shadow_driver_wptr);
++    shadow_driver_rptr += ( );
++  } else if (driver_rptr > shadow_driver_wptr) {
++    /* Processing Range 0 ( shadow_driver_rptr .. queue_max -1 ) */
++    process_driver_queue_range(shadow_driver_rptr, queue_max -1);
++    shadow_driver_rptr += ( );
++    /* Processing Range 1 ( 0 .. shadow_driver_wptr ) */
++    process_driver_queue_range(0, shadow_driver_wptr);
++    shadow_driver_rptr += ( );
++  } else {
++      /* Queue is Empty, return */
++  }
++  /* Atomic Update of Read Pointer */
++  
++  driver_rptr = shadow_driver_rptr;  
++};
++
++// Do invalidates -> move to interrupt handler
++
++void main() {
++
++  while(1) {
++    
++    // For one of the valid queues, look for a packet using read_ptr, go read half the packet, then the rest
++    // change which queue
++
++    // look at command queue if in testing mode
++  }
++  
++}
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/command_queue.c.bak dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/command_queue.c.bak
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/command_queue.c.bak	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/command_queue.c.bak	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,113 @@
++
++struct free_buffer_list {
++  u8 idx;
++  u8 len;
++  struct free_buffer_list * next;
++}
++struct ring_entry{
++  u8 idx;
++  u8 len;
++  u8 type;
++  u8 flags; 
++}
++  
++// type describes command
++
++// type 0 is invalid
++// type 1 is buffer ownership / acknowledge
++// type 2 is create queue
++// type 3 is memory_operation + (optional) payload
++
++struct create_queue {
++  u64 va;
++  u64 rptr;
++};
++  
++struct memory_operation {
++  enum type { READ_UT = 0, WRITE_UT = 1, READ_T=2, WRITE_T=3, TRANSLATE=4};
++  u64 address;
++}
++
++  
++struct ring_entry driver_ring[16];
++struct ring_entry  device_ring[16];
++
++/* where device will read the next entry */
++volatile u8 driver_rptr;
++
++/* where driver will put the next entry */
++volatile u8 driver_wptr;
++
++volatile u8 device_rptr;
++volatile u8 device_wptr;
++
++// indexes into this memory pool. 
++u8 mempool[256];
++
++static struct free_buffer_list * driver_free_buffers;
++
++/* never allow advancement of write pointer to be equal to read pointer - avoids ambiguous full / empty */
++
++void init() {
++  driver_free_buffers = NULL;
++}
++
++void process_driver_queue_range(u8 start_range, u8 end_range) {
++
++  for (unsigned i = start_range ; i < end_range) {
++    process_command(i);
++  }
++  
++}
++
++void process_command(i) {
++
++  switch( command->type) {
++  case MEMORY_OPERATION :
++    // send out descriptor
++    // 
++    break;
++  } 
++  
++}
++
++
++/* on device */
++void poll_driver_command_queue() {
++  u8 shadow_driver_wptr = driver_wptr;
++  u8 shadow_driver_rptr = driver_rptr;
++  
++  // look at driver rptr, and driver wptr.
++  // if rptr < wptr, then entries between rptr...shadow_driver_wptr are valid
++  if (driver_rptr < shadow_driver_wptr) {
++    // process them, incrementing the shadow_rptr;
++    process_driver_queue_range(driver_rptr, shadow_driver_wptr);
++    shadow_driver_rptr += ( );
++  } else if (driver_rptr > shadow_driver_wptr) {
++    /* Processing Range 0 ( shadow_driver_rptr .. queue_max -1 ) */
++    process_driver_queue_range(shadow_driver_rptr, queue_max -1);
++    shadow_driver_rptr += ( );
++    /* Processing Range 1 ( 0 .. shadow_driver_wptr ) */
++    process_driver_queue_range(0, shadow_driver_wptr);
++    shadow_driver_rptr += ( );
++  } else {
++      /* Queue is Empty, return */
++  }
++  /* Atomic Update of Read Pointer */
++  
++  driver_rptr = shadow_driver_rptr;  
++};
++
++// Do invalidates -> move to interrupt handler
++
++void main() {
++
++  while(1) {
++    
++    // For one of the valid queues, look for a packet using read_ptr, go read half the packet, then the rest
++    // change which queue
++
++    // look at command queue if in testing mode
++  }
++  
++}
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/command_queue.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/command_queue.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/command_queue.h	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/command_queue.h	2021-03-05 09:24:24.000000000 -0600
+@@ -0,0 +1,135 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++
++/* 
++
++   mmap -> region of memory for command request
++   mmap -> region of memory for command response
++
++   ioctl -> CREATE_SYS_REQUEST_QUEUE
++   ioctl -> CREATE_SYS_RESPONSE_QUEUE
++
++   ioctl -> SYSTEM_RESET
++
++   -> initialization functions must reconfigure all global variables
++
++   Initially, have queue base pointers and read/write pointers in the CSRs 
++
++   - Eventually, put these in system memory referenced by a PCI configuration space write indicating physical address
++
++*/
++#define CTC(X) ( \
++   { extern int __attribute__((error("assert fail"))) compile_time_check(); \
++     ( ( X ) ? 0 : compile_time_check()),0; });
++
++#include <stdint.h>
++
++volatile uint64_t driver_queue_base;
++
++// limit queue size
++volatile uint32_t driver_queue_size;
++
++/* where device will read the next entry */
++volatile uint32_t driver_rindex;
++
++/* where driver will put the next entry - not used by device */
++volatile uint32_t driver_windex;
++
++volatile uint64_t device_queue_base;
++
++volatile uint32_t device_queue_size;
++/* where driver will read the next response - not used by device */
++volatile uint32_t device_rindex;
++
++/* where device will write the next response */
++volatile uint32_t device_windex;
++
++
++// type describes command
++
++// type 0 is invalid
++// type 1 is buffer ownership / acknowledge
++// type 2 is create queue
++// type 3 is memory_operation + (optional) payload
++
++
++typedef uint16_t hsa_header_t;
++
++struct translation_request {
++  uint64_t va;
++};
++
++struct translation_response {
++  uint64_t va;
++  uint64_t pa;
++};
++
++/* WRITE_REQUEST_UTRANS, WRITE_REQUEST_TRANS, READ_RESPONSE*/
++struct memory_operation_with_data {
++  uint64_t addr;
++  uint8_t size;
++  char data[32]; // up to 32 byte of data
++};
++
++/* READ_REQUEST_UT, READ_REQUEST_T */
++struct memory_operation_without_data {
++  uint64_t addr;
++  uint8_t size;
++};
++
++/* Size <= 480 Bytes */
++struct create_queue_params {
++  uint64_t queue_base;
++  uint32_t queue_size;
++  uint64_t queue_rptr;
++  uint64_t queue_wptr;
++};
++
++/* padded to align to 64-bit boundary */
++struct memory_operation_params {
++  
++  enum { READ_REQUEST_UNTRANS = 0,
++	      READ_REQUEST_TRANS=1,
++	      READ_RESPONSE=2,
++	      WRITE_REQUEST_UNTRANS = 3,
++	      WRITE_REQUEST_TRANS = 4,
++	      TRANSLATE_REQUEST=5,
++	      TRANSLATE_RESPONSE=6} type ;
++  
++  union {
++    struct translation_request treq;
++    struct translation_response tresp;
++    struct memory_operation_without_data rreq;
++    struct memory_operation_with_data wreq;
++    struct memory_operation_with_data rresp;
++  } op __attribute__((aligned(8)));vpn
++};
++
++/* Size < 512 Bytes - if c11 supported, check this with static assert, else use GCC specific __error attribute*/
++struct hsa_xilinx_packet {
++   hsa_header_t hsa_header; //<= 16 bits
++  enum { op_create_driver_queue, op_create_device_queue, op_memory_operation} hsa_xilinx_type ; // assume <16 bits
++  union {
++    struct memory_operation_params mem;
++    struct create_queue_params queue;
++  } command;
++};
++
++typedef union {
++    struct memory_operation_params mem;
++    struct create_queue_params queue;
++  } command_t;
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/command_queue.h.bak dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/command_queue.h.bak
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/command_queue.h.bak	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/command_queue.h.bak	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,119 @@
++
++/* 
++
++   mmap -> region of memory for command request
++   mmap -> region of memory for command response
++
++   ioctl -> CREATE_SYS_REQUEST_QUEUE
++   ioctl -> CREATE_SYS_RESPONSE_QUEUE
++
++   ioctl -> SYSTEM_RESET
++
++   -> initialization functions must reconfigure all global variables
++
++   Initially, have queue base pointers and read/write pointers in the CSRs 
++
++   - Eventually, put these in system memory referenced by a PCI configuration space write indicating physical address
++
++*/
++#define CTC(X) ( \
++   { extern int __attribute__((error("assert fail"))) compile_time_check(); \
++     ( ( X ) ? 0 : compile_time_check()),0; });
++
++#include <stdint.h>
++
++volatile uint64_t driver_queue_base;
++
++// limit queue size
++volatile uint32_t driver_queue_size;
++
++/* where device will read the next entry */
++volatile uint32_t driver_rindex;
++
++/* where driver will put the next entry - not used by device */
++volatile uint32_t driver_windex;
++
++volatile uint64_t device_queue_base;
++
++volatile uint32_t device_queue_size;
++/* where driver will read the next response - not used by device */
++volatile uint32_t device_rindex;
++
++/* where device will write the next response */
++volatile uint32_t device_windex;
++
++
++// type describes command
++
++// type 0 is invalid
++// type 1 is buffer ownership / acknowledge
++// type 2 is create queue
++// type 3 is memory_operation + (optional) payload
++
++
++typedef uint16_t hsa_header_t;
++
++struct translation_request {
++  uint64_t va;
++};
++
++struct translation_response {
++  uint64_t va;
++  uint64_t pa;
++};
++
++/* WRITE_REQUEST_UTRANS, WRITE_REQUEST_TRANS, READ_RESPONSE*/
++struct memory_operation_with_data {
++  uint64_t addr;
++  uint8_t size;
++  char data[32]; // up to 32 byte of data
++};
++
++/* READ_REQUEST_UT, READ_REQUEST_T */
++struct memory_operation_without_data {
++  uint64_t addr;
++  uint8_t size;
++};
++
++/* Size <= 480 Bytes */
++struct create_queue_params {
++  uint64_t queue_base;
++  uint32_t queue_size;
++  uint64_t queue_rptr;
++  uint64_t queue_wptr;
++};
++
++/* padded to align to 64-bit boundary */
++struct memory_operation_params {
++  
++  enum { READ_REQUEST_UNTRANS = 0,
++	      READ_REQUEST_TRANS=1,
++	      READ_RESPONSE=2,
++	      WRITE_REQUEST_UNTRANS = 3,
++	      WRITE_REQUEST_TRANS = 4,
++	      TRANSLATE_REQUEST=5,
++	      TRANSLATE_RESPONSE=6} type ;
++  
++  union {
++    struct translation_request treq;
++    struct translation_response tresp;
++    struct memory_operation_without_data rreq;
++    struct memory_operation_with_data wreq;
++    struct memory_operation_with_data rresp;
++  } op __attribute__((aligned(8)));vpn
++};
++
++/* Size < 512 Bytes - if c11 supported, check this with static assert, else use GCC specific __error attribute*/
++struct hsa_xilinx_packet {
++   hsa_header_t hsa_header; //<= 16 bits
++  enum { op_create_driver_queue, op_create_device_queue, op_memory_operation} hsa_xilinx_type ; // assume <16 bits
++  union {
++    struct memory_operation_params mem;
++    struct create_queue_params queue;
++  } command;
++};
++
++typedef union {
++    struct memory_operation_params mem;
++    struct create_queue_params queue;
++  } command_t;
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/hsa-app.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/hsa-app.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/hsa-app.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/hsa-app.c	2021-03-05 09:24:48.000000000 -0600
+@@ -0,0 +1,515 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++
++#include "dmautils.h"
++#include "qdma_nl.h"
++
++#include <stdio.h>
++#include <string.h>
++#include <err.h>
++#include <errno.h>
++
++#include <sys/mman.h>
++
++#include <sys/types.h>
++#include <unistd.h>
++
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++
++#include <stdint.h>
++
++#include "../../driver/include/xfd.h"
++
++
++#define VA_LO        0x00
++#define VA_HI        0x04
++#define PA_LO        0x0C
++#define PA_HI        0x10
++#define HOST_BUFF_LO 0x14
++#define HOST_BUFF_HI 0x18
++#define ATS_MODE_CSR 0x08
++#define AT_MODE_CSR  0x24
++#define LEN_CSR  0x28
++
++#define Q_CSR         0x40
++#define Q_RANGE       0x20
++#define Q_READ_PTR_LO 0x00
++#define Q_READ_PTR_HI 0x04
++#define Q_MEMORY_LO   0x18
++#define Q_MEMORY_HI   0x1c
++
++#define WRITE_DATA_CSR         0x100
++
++
++#define QUEUE_0_CREATE 0x10
++
++#define RESET 0x0
++#define ADDRESS_TRANSLATION_REQUEST 0x2
++#define READ_REQUEST 0x4
++#define WRITE_REQUEST 0x6
++#define QUEUE_0_CREATE 0x10
++
++
++#define UNTRANSLATED         0b00
++#define TRANSLATION_REQUEST  0b01
++#define TRANSLATED           0b10
++
++
++// name, size, type, reg, barrier
++//writel, "l", unsigned int "r" :"memory"
++  
++/* static inline void writel(unsigned int value, const volatile void * address) {
++    asm volatile("mov" "l" " %1,%0": :reg (value), "m" (*(volatile unsigned int __force *)address) barrier); 
++    }*/
++
++#define build_mmio_write(name, size, type, reg, barrier) \
++static inline void name(type val, volatile void *addr) \
++{ asm volatile("mov" size " %0,%1": :reg (val), \
++"m" (*(volatile type *)addr) barrier); }
++
++build_mmio_write(writel, "l", unsigned int, "r", :"memory")
++
++static int bus, device, function, bdf;
++
++static int (*xnl_proc_fn[XNL_CMD_MAX])(struct xcmd_info *xcmd) = {
++	qdma_dev_list_dump,      /* XNL_CMD_DEV_LIST */
++	qdma_dev_info,           /* XNL_CMD_DEV_INFO */
++	qdma_dev_stat,           /* XNL_CMD_DEV_STAT */
++	qdma_dev_stat_clear,     /* XNL_CMD_DEV_STAT_CLEAR */
++	qdma_reg_dump,           /* XNL_CMD_REG_DUMP */
++	qdma_reg_read,           /* XNL_CMD_REG_RD */
++	qdma_reg_write,          /* XNL_CMD_REG_WRT */
++	qdma_dev_q_list_dump,    /* XNL_CMD_Q_LIST */
++	qdma_q_add,              /* XNL_CMD_Q_ADD */
++	qdma_q_start,            /* XNL_CMD_Q_START */
++	qdma_q_stop,             /* XNL_CMD_Q_STOP */
++	qdma_q_del,              /* XNL_CMD_Q_DEL */
++	qdma_q_dump,             /* XNL_CMD_Q_DUMP */
++	qdma_q_desc_dump,        /* XNL_CMD_Q_DESC */
++	qdma_q_desc_dump,        /* XNL_CMD_Q_CMPT */
++	NULL,                    /* XNL_CMD_Q_RX_PKT */
++	qdma_q_cmpt_read,        /* XNL_CMD_Q_CMPT_READ */
++#ifdef ERR_DEBUG
++	NULL,                    /* XNL_CMD_Q_ERR_INDUCE */
++#endif
++	qdma_print_hi,
++	qdma_dev_intr_ring_dump, /* XNL_CMD_INTR_RING_DUMP */
++	NULL,                    /* XNL_CMD_Q_UDD */
++	qdma_dev_get_global_csr, /* XNL_CMD_GLOBAL_CSR */
++	qdma_dev_cap,            /* XNL_CMD_DEV_CAP */
++	NULL                     /* XNL_CMD_GET_Q_STATE */
++};
++
++
++static void xnl_dump_response(const char *resp)
++{
++	printf("%s", resp);
++}
++
++static void xnl_parse_response(const char *resp)
++{
++  char local_response[256];
++  
++  strncpy(local_response, resp, 256);
++  
++  // qdma04000	0000:04:00.0	max QP: 0, -~-
++
++  // check for string ERR!
++  // check that the response isn't zero characters
++  // this could indicate either a truncated response, or no response
++  int index = 0;
++  if ( strlen(local_response) > 0) {
++
++    char * pch = strtok(local_response,"\t\n");
++    while(pch != NULL) {
++      if (index == 1) { 
++      printf("PCH is %s\n", pch);
++      unsigned zero;
++      sscanf(pch,"%d:%d:%d.%d", &zero, &bus, &device, &function);
++      bdf = (bus << 12) + (device << 4) + function;
++      break;
++      }
++      pch=strtok(NULL,"\t\n");
++      index++;
++    }
++    
++  }
++  
++ 
++}
++
++
++static int xnl_proc_cmd(struct xcmd_info *xcmd)
++{
++  if ( xcmd->op == XNL_CMD_IOMMU_MAP_PAGE) { 
++	xcmd->log_msg_dump = xnl_dump_response;
++  } else {
++    xcmd->log_msg_dump = xnl_parse_response;
++  }
++  if (xnl_proc_fn[xcmd->op]) {
++    // printf("Processing Function Called for %d\n", xcmd->op);
++    return xnl_proc_fn[xcmd->op](xcmd);
++  } else {
++    printf("No Processing Function Registered\n");
++    return -EOPNOTSUPP;
++  }
++
++}
++
++
++
++unsigned read_csr(unsigned bar, unsigned reg_offset, unsigned bdf, unsigned *val) {
++  struct xcmd_info xcmd;
++
++  memset(&xcmd, 0, sizeof(xcmd));
++
++  xcmd.op = XNL_CMD_REG_RD;
++  xcmd.req.reg.bar = bar;
++  xcmd.req.reg.sflags = 0xffffffff;
++	xcmd.req.reg.reg = reg_offset; 
++  xcmd.if_bdf = bdf;
++  int resp =   xnl_proc_cmd(&xcmd);
++  *val = xcmd.req.reg.val;
++  return resp;
++}
++
++unsigned write_csr(unsigned bar, unsigned reg_offset, unsigned bdf, unsigned val) {
++  struct xcmd_info xcmd;
++
++ memset(&xcmd, 0, sizeof(xcmd));
++  xcmd.op = XNL_CMD_REG_WRT;
++  xcmd.req.reg.bar = bar;
++  xcmd.req.reg.sflags = 0xffffffff;
++	xcmd.req.reg.reg = reg_offset; 
++	xcmd.req.reg.val = val; 
++  xcmd.if_bdf = bdf;
++  int resp =   xnl_proc_cmd(&xcmd);
++  return resp;
++}
++
++
++unsigned set_bdf() {
++  struct xcmd_info xcmd;
++  memset(&xcmd, 0, sizeof(xcmd));
++  xcmd.op =	XNL_CMD_DEV_LIST;
++  int resp =   xnl_proc_cmd(&xcmd);
++  return resp;
++}
++
++
++unsigned long address_translation(unsigned long addr) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  // Write to 0xC and 0x10
++  write_csr(2, VA_LO, bdf, addr_lo);
++  write_csr(2, VA_HI, bdf, addr_hi);
++  write_csr(2, LEN_CSR, bdf, 0x2);
++  write_csr(2, AT_MODE_CSR, bdf, TRANSLATION_REQUEST);
++  write_csr(2, ATS_MODE_CSR, bdf, ADDRESS_TRANSLATION_REQUEST);
++
++  // Spin on step counter getting to 3, which doesn't work at the moment
++
++  unsigned step = 0;
++
++  while (step != (ADDRESS_TRANSLATION_REQUEST+1))
++    read_csr(2, ATS_MODE_CSR, bdf, &step);
++
++  unsigned val_lo, val_hi;
++
++  read_csr(2, HOST_BUFF_HI, bdf, &val_hi);
++  read_csr(2, HOST_BUFF_LO, bdf, &val_lo);
++
++  unsigned long to_return = (unsigned long)val_lo;
++  to_return |= ((unsigned long)val_hi) << 32;
++  return(to_return);
++
++}
++
++unsigned long do_write(unsigned long addr, unsigned at_mode, unsigned *data, unsigned data_len_bytes) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  // Write to 0xC and 0x10
++  write_csr(2, VA_LO, bdf, addr_lo);
++  write_csr(2, VA_HI, bdf, addr_hi);
++  write_csr(2, AT_MODE_CSR, bdf, at_mode);
++  write_csr(2, LEN_CSR, bdf, data_len_bytes);
++
++  // Now we want to write the data, but how much?
++  unsigned data_len_dwords = data_len_bytes / 4;
++  if (data_len_bytes % 4)
++    data_len_dwords++;
++
++  for (int d=0;d<data_len_dwords;d++) {
++    write_csr(2, WRITE_DATA_CSR+4*d, bdf, data[d]);
++  }
++
++  write_csr(2, ATS_MODE_CSR, bdf, WRITE_REQUEST);
++
++  // Spin on step counter getting to 7
++
++  unsigned step = 0;
++
++  while (step != (WRITE_REQUEST+1))
++    read_csr(2, ATS_MODE_CSR, bdf, &step);
++
++  return(0);
++
++}
++
++
++
++unsigned long do_read(unsigned long addr, unsigned at_mode) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  // Write to 0xC and 0x10
++  write_csr(2, VA_LO, bdf, addr_lo);
++  write_csr(2, VA_HI, bdf, addr_hi);
++  write_csr(2, AT_MODE_CSR, bdf, at_mode);
++  write_csr(2, LEN_CSR, bdf, 0x20);
++  write_csr(2, ATS_MODE_CSR, bdf, READ_REQUEST);
++
++  // Spin on step counter getting to 5, which doesn't work at the moment
++
++  unsigned step = 0;
++
++  while (step != (READ_REQUEST+1))
++    read_csr(2, ATS_MODE_CSR, bdf, &step);
++
++  unsigned val_lo, val_hi;
++
++  read_csr(2, HOST_BUFF_HI, bdf, &val_hi);
++  read_csr(2, HOST_BUFF_LO, bdf, &val_lo);
++
++  unsigned long to_return = (unsigned long)val_lo;
++  to_return |= ((unsigned long)val_hi) << 32;
++  return(to_return);
++
++}
++
++
++unsigned long untranslated_read(unsigned long addr) {
++
++  return(do_read(addr, UNTRANSLATED));
++}
++
++unsigned long translated_read(unsigned long addr) {
++
++  return(do_read(addr, TRANSLATED));
++}
++
++
++int main(int argv, char ** argc) {
++
++  struct xcmd_info xcmd;
++
++  printf("PID is %d\n", getpid());
++
++  memset(&xcmd, 0, sizeof(xcmd));
++  xcmd.vf = 0;
++  xcmd.if_bdf = 16384;
++
++  int fd = open("/dev/xfd", O_RDWR);
++
++  if (fd < 0)  {
++    printf("Could not open the file, it is %d\n",fd);
++    return -1;
++  }
++
++  printf("Opened fd %d\n", fd);
++  // grab me some uncached host memory,with the IOMMU allowing access from FPGA
++  
++  volatile void * addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , fd, 64*1024);
++
++  if (!addr) { 
++    printf("APP: Memory Allocation failed, returned %p\n", addr);
++    return -1;
++  }
++
++
++  // buffer should be a 4K unmapped buffer
++  
++ volatile unsigned long *buffer = (volatile unsigned long *)(addr);
++
++ printf("CPU Read 0x%016lX\n",buffer[0]);
++  printf("CPU Read 0x%016lX\n",buffer[1]);
++
++ 
++  buffer[0]  = 0x5AF1F15A76543210L;
++  buffer[1]  = 0xF1F15A5A76543211L;
++
++ 
++  
++  __sync_synchronize();
++  ioctl(fd, 42, buffer);
++  
++  // value is a stack allocated array of 20 values
++  unsigned value[20];
++  value[0]  = 0x00000180;
++  value[1]  = 0x00000000;
++  value[2]  = 0x00000020;
++  value[3]  = 0x00000000;
++
++  // AQL kernel dispatch packet - 512 bits = 8 64 bit words
++  value[4]  = 0x00010001;  // this is the start of the AQL packet - workgroup size y  workgroup size x  1D   0001 at the end makes it invalid
++  value[5]  = 0x00000001;
++  value[6]  = 0x38D9DADB;
++  value[7]  = 0xDCDDDEDF;
++  value[8]  = 0x48D9DADB;
++  value[9]  = 0xDCDDDEDF;
++  value[10] = 0x58D9DADC;
++  value[11] = 0xDCDDDEDF;
++  value[12] = 0x68D9DADD;
++  value[13] = 0xDCDDDEDF;
++  value[14] = 0x78D9DADE;
++  value[15] = 0xDCDDDEDF;
++  value[16] = 0x88D9DADF;
++  value[17] = 0xDCDDDEDF;
++  value[18] = 0x98D9DADF;
++
++  /*
++  // throw the lower 32-bits in this field
++  xcmd.req.reg.range_start = (unsigned long)addr & 0x00000000FFFFFFFF;
++  // throw the upper 32-bits in this field
++  xcmd.req.reg.range_end = ((unsigned long)addr & 0xFFFFFFFF00000000) >> 32;
++
++
++
++
++  unsigned va_lo_val  = xcmd.req.reg.range_start;
++  unsigned va_hi_val = xcmd.req.reg.range_end;
++  
++
++  printf("%p, range_start = %x, range_end = %x\n", addr, xcmd.req.reg.range_start, xcmd.req.reg.range_end );
++  */
++
++  set_bdf(); // Has the side effect of setting bus, device, function & bdf;
++
++  write_csr(2, ATS_MODE_CSR, bdf, RESET);
++  unsigned step;
++  read_csr(2, ATS_MODE_CSR, bdf, &step);  // step counter
++  printf("Step counter is %d\n", step);
++
++  /*
++  // Write a HSA packet
++  write_csr(2, Q_CSR + Q_READ_PTR_LO, bdf, 0);
++  write_csr(2, Q_CSR + Q_READ_PTR_HI, bdf, 0);
++  
++  write_csr(2, Q_CSR + Q_MEMORY_LO, bdf, va_lo_val+16);
++  write_csr(2, Q_CSR + Q_MEMORY_HI, bdf, va_hi_val);
++  
++  write_csr(2, ATS_MODE_CSR, bdf, QUEUE_0_CREATE);
++  step = QUEUE_0_CREATE;
++  while (step) {
++    read_csr(2, ATS_MODE_CSR, bdf, &step);  // step counter
++  }
++  printf("Empty queue created : Step counter is %d\n", step);
++  
++
++  // Lets send a kernel packet
++
++  value[2] = 0x0000000100010002L;  // this is the start of the AQL packet - workgroup size y  workgroup size x  1D   0002 at the end makes it valid
++  write_csr(2, ATS_MODE_CSR, bdf, QUEUE_0_CREATE);
++  step = QUEUE_0_CREATE;
++  while (step) {
++    read_csr(2, ATS_MODE_CSR, bdf, &step);  // step counter
++  }
++  printf("Kernel start packet sent: Step counter is %d\n", step);
++  */
++
++
++  /*
++  // Make an address translation request
++  write_csr(2, VA_LO, bdf, 0);
++  write_csr(2, VA_HI, bdf, 0);
++
++
++  write_csr(2, AT_MODE_CSR, bdf, 0x01);
++  write_csr(2, ATS_MODE_CSR, bdf, ADDRESS_TRANSLATION_REQUEST);
++
++  unsigned spin;
++  read_csr(2, 0x8, bdf, &spin);  // spin register
++  printf("Spin is %d\n", spin);
++
++  // Reset ...
++  write_csr(2, ATS_MODE_CSR, bdf, RESET);
++ 
++
++  
++  // Translated read from a PA
++  
++  unsigned long read = translated_read(0x000001234000l); // What could possibly go wrong?
++  printf("PA Read 0x%016lX\n",read);
++  */
++
++  volatile void * csr_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , fd, 0);
++
++  uint32_t * register_ptr = ( uint32_t *)(csr_addr);
++
++  // set step counter to 6
++  if ( register_ptr ) {
++    writel(6, register_ptr + ATS_MODE_CSR);
++  
++       printf("register is %d\n", *(register_ptr  +  ATS_MODE_CSR));
++  }else {
++    printf("mmap failed\n");
++  }
++
++  
++  // try mapping the csrs
++  
++  printf("CPU Read 0x%016lX\n",buffer[0]);
++  printf("CPU Read 0x%016lX\n",buffer[1]);
++  printf("CPU Read (not written) 0x%016lX\n",buffer[2]);
++  /* Do the same read from the Microblaze */
++  
++  unsigned long ut_read = untranslated_read((unsigned long)addr); // What could possibly go wrong?
++
++  printf("VA Read  0x%016lX\n",ut_read);
++  ut_read = untranslated_read(((unsigned long)addr)+8); // What could possibly go wrong?
++  printf("VA Read  0x%016lX\n",ut_read);
++  
++    
++  unsigned long at_read = address_translation((unsigned long)addr); // What could possibly go wrong?
++  printf("AT Read  0x%016lX\n",at_read);
++  
++  
++  do_write((unsigned long)addr, UNTRANSLATED, value, 2);
++  printf("First word is now %016lX\n", buffer[0]);
++  
++  unsigned long rb_read = untranslated_read((unsigned long)addr); // What could possibly go wrong?
++  printf("RB Read  0x%016lX\n",rb_read);
++
++  // Now modify the value
++
++  buffer[0] = 0x0101010102020202L;
++  printf("CPU_READ %016lX\n", buffer[0]);
++
++  unsigned long rb2_read = untranslated_read((unsigned long)addr); // What could possibly go wrong?
++  printf("RB2Read  0x%016lX\n",rb2_read);
++
++  // Go back to invalidates ...
++  write_csr(2, ATS_MODE_CSR, bdf, RESET);
++  close(fd);
++
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/hsa-app.c.bak dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/hsa-app.c.bak
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/hsa-app.c.bak	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/hsa-app.c.bak	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,499 @@
++
++#include "dmautils.h"
++#include "qdma_nl.h"
++
++#include <stdio.h>
++#include <string.h>
++#include <err.h>
++#include <errno.h>
++
++#include <sys/mman.h>
++
++#include <sys/types.h>
++#include <unistd.h>
++
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++
++#include <stdint.h>
++
++#include "../../driver/include/xfd.h"
++
++
++#define VA_LO        0x00
++#define VA_HI        0x04
++#define PA_LO        0x0C
++#define PA_HI        0x10
++#define HOST_BUFF_LO 0x14
++#define HOST_BUFF_HI 0x18
++#define ATS_MODE_CSR 0x08
++#define AT_MODE_CSR  0x24
++#define LEN_CSR  0x28
++
++#define Q_CSR         0x40
++#define Q_RANGE       0x20
++#define Q_READ_PTR_LO 0x00
++#define Q_READ_PTR_HI 0x04
++#define Q_MEMORY_LO   0x18
++#define Q_MEMORY_HI   0x1c
++
++#define WRITE_DATA_CSR         0x100
++
++
++#define QUEUE_0_CREATE 0x10
++
++#define RESET 0x0
++#define ADDRESS_TRANSLATION_REQUEST 0x2
++#define READ_REQUEST 0x4
++#define WRITE_REQUEST 0x6
++#define QUEUE_0_CREATE 0x10
++
++
++#define UNTRANSLATED         0b00
++#define TRANSLATION_REQUEST  0b01
++#define TRANSLATED           0b10
++
++
++// name, size, type, reg, barrier
++//writel, "l", unsigned int "r" :"memory"
++  
++/* static inline void writel(unsigned int value, const volatile void * address) {
++    asm volatile("mov" "l" " %1,%0": :reg (value), "m" (*(volatile unsigned int __force *)address) barrier); 
++    }*/
++
++#define build_mmio_write(name, size, type, reg, barrier) \
++static inline void name(type val, volatile void *addr) \
++{ asm volatile("mov" size " %0,%1": :reg (val), \
++"m" (*(volatile type *)addr) barrier); }
++
++build_mmio_write(writel, "l", unsigned int, "r", :"memory")
++
++static int bus, device, function, bdf;
++
++static int (*xnl_proc_fn[XNL_CMD_MAX])(struct xcmd_info *xcmd) = {
++	qdma_dev_list_dump,      /* XNL_CMD_DEV_LIST */
++	qdma_dev_info,           /* XNL_CMD_DEV_INFO */
++	qdma_dev_stat,           /* XNL_CMD_DEV_STAT */
++	qdma_dev_stat_clear,     /* XNL_CMD_DEV_STAT_CLEAR */
++	qdma_reg_dump,           /* XNL_CMD_REG_DUMP */
++	qdma_reg_read,           /* XNL_CMD_REG_RD */
++	qdma_reg_write,          /* XNL_CMD_REG_WRT */
++	qdma_dev_q_list_dump,    /* XNL_CMD_Q_LIST */
++	qdma_q_add,              /* XNL_CMD_Q_ADD */
++	qdma_q_start,            /* XNL_CMD_Q_START */
++	qdma_q_stop,             /* XNL_CMD_Q_STOP */
++	qdma_q_del,              /* XNL_CMD_Q_DEL */
++	qdma_q_dump,             /* XNL_CMD_Q_DUMP */
++	qdma_q_desc_dump,        /* XNL_CMD_Q_DESC */
++	qdma_q_desc_dump,        /* XNL_CMD_Q_CMPT */
++	NULL,                    /* XNL_CMD_Q_RX_PKT */
++	qdma_q_cmpt_read,        /* XNL_CMD_Q_CMPT_READ */
++#ifdef ERR_DEBUG
++	NULL,                    /* XNL_CMD_Q_ERR_INDUCE */
++#endif
++	qdma_print_hi,
++	qdma_dev_intr_ring_dump, /* XNL_CMD_INTR_RING_DUMP */
++	NULL,                    /* XNL_CMD_Q_UDD */
++	qdma_dev_get_global_csr, /* XNL_CMD_GLOBAL_CSR */
++	qdma_dev_cap,            /* XNL_CMD_DEV_CAP */
++	NULL                     /* XNL_CMD_GET_Q_STATE */
++};
++
++
++static void xnl_dump_response(const char *resp)
++{
++	printf("%s", resp);
++}
++
++static void xnl_parse_response(const char *resp)
++{
++  char local_response[256];
++  
++  strncpy(local_response, resp, 256);
++  
++  // qdma04000	0000:04:00.0	max QP: 0, -~-
++
++  // check for string ERR!
++  // check that the response isn't zero characters
++  // this could indicate either a truncated response, or no response
++  int index = 0;
++  if ( strlen(local_response) > 0) {
++
++    char * pch = strtok(local_response,"\t\n");
++    while(pch != NULL) {
++      if (index == 1) { 
++      printf("PCH is %s\n", pch);
++      unsigned zero;
++      sscanf(pch,"%d:%d:%d.%d", &zero, &bus, &device, &function);
++      bdf = (bus << 12) + (device << 4) + function;
++      break;
++      }
++      pch=strtok(NULL,"\t\n");
++      index++;
++    }
++    
++  }
++  
++ 
++}
++
++
++static int xnl_proc_cmd(struct xcmd_info *xcmd)
++{
++  if ( xcmd->op == XNL_CMD_IOMMU_MAP_PAGE) { 
++	xcmd->log_msg_dump = xnl_dump_response;
++  } else {
++    xcmd->log_msg_dump = xnl_parse_response;
++  }
++  if (xnl_proc_fn[xcmd->op]) {
++    // printf("Processing Function Called for %d\n", xcmd->op);
++    return xnl_proc_fn[xcmd->op](xcmd);
++  } else {
++    printf("No Processing Function Registered\n");
++    return -EOPNOTSUPP;
++  }
++
++}
++
++
++
++unsigned read_csr(unsigned bar, unsigned reg_offset, unsigned bdf, unsigned *val) {
++  struct xcmd_info xcmd;
++
++  memset(&xcmd, 0, sizeof(xcmd));
++
++  xcmd.op = XNL_CMD_REG_RD;
++  xcmd.req.reg.bar = bar;
++  xcmd.req.reg.sflags = 0xffffffff;
++	xcmd.req.reg.reg = reg_offset; 
++  xcmd.if_bdf = bdf;
++  int resp =   xnl_proc_cmd(&xcmd);
++  *val = xcmd.req.reg.val;
++  return resp;
++}
++
++unsigned write_csr(unsigned bar, unsigned reg_offset, unsigned bdf, unsigned val) {
++  struct xcmd_info xcmd;
++
++ memset(&xcmd, 0, sizeof(xcmd));
++  xcmd.op = XNL_CMD_REG_WRT;
++  xcmd.req.reg.bar = bar;
++  xcmd.req.reg.sflags = 0xffffffff;
++	xcmd.req.reg.reg = reg_offset; 
++	xcmd.req.reg.val = val; 
++  xcmd.if_bdf = bdf;
++  int resp =   xnl_proc_cmd(&xcmd);
++  return resp;
++}
++
++
++unsigned set_bdf() {
++  struct xcmd_info xcmd;
++  memset(&xcmd, 0, sizeof(xcmd));
++  xcmd.op =	XNL_CMD_DEV_LIST;
++  int resp =   xnl_proc_cmd(&xcmd);
++  return resp;
++}
++
++
++unsigned long address_translation(unsigned long addr) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  // Write to 0xC and 0x10
++  write_csr(2, VA_LO, bdf, addr_lo);
++  write_csr(2, VA_HI, bdf, addr_hi);
++  write_csr(2, LEN_CSR, bdf, 0x2);
++  write_csr(2, AT_MODE_CSR, bdf, TRANSLATION_REQUEST);
++  write_csr(2, ATS_MODE_CSR, bdf, ADDRESS_TRANSLATION_REQUEST);
++
++  // Spin on step counter getting to 3, which doesn't work at the moment
++
++  unsigned step = 0;
++
++  while (step != (ADDRESS_TRANSLATION_REQUEST+1))
++    read_csr(2, ATS_MODE_CSR, bdf, &step);
++
++  unsigned val_lo, val_hi;
++
++  read_csr(2, HOST_BUFF_HI, bdf, &val_hi);
++  read_csr(2, HOST_BUFF_LO, bdf, &val_lo);
++
++  unsigned long to_return = (unsigned long)val_lo;
++  to_return |= ((unsigned long)val_hi) << 32;
++  return(to_return);
++
++}
++
++unsigned long do_write(unsigned long addr, unsigned at_mode, unsigned *data, unsigned data_len_bytes) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  // Write to 0xC and 0x10
++  write_csr(2, VA_LO, bdf, addr_lo);
++  write_csr(2, VA_HI, bdf, addr_hi);
++  write_csr(2, AT_MODE_CSR, bdf, at_mode);
++  write_csr(2, LEN_CSR, bdf, data_len_bytes);
++
++  // Now we want to write the data, but how much?
++  unsigned data_len_dwords = data_len_bytes / 4;
++  if (data_len_bytes % 4)
++    data_len_dwords++;
++
++  for (int d=0;d<data_len_dwords;d++) {
++    write_csr(2, WRITE_DATA_CSR+4*d, bdf, data[d]);
++  }
++
++  write_csr(2, ATS_MODE_CSR, bdf, WRITE_REQUEST);
++
++  // Spin on step counter getting to 7
++
++  unsigned step = 0;
++
++  while (step != (WRITE_REQUEST+1))
++    read_csr(2, ATS_MODE_CSR, bdf, &step);
++
++  return(0);
++
++}
++
++
++
++unsigned long do_read(unsigned long addr, unsigned at_mode) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  // Write to 0xC and 0x10
++  write_csr(2, VA_LO, bdf, addr_lo);
++  write_csr(2, VA_HI, bdf, addr_hi);
++  write_csr(2, AT_MODE_CSR, bdf, at_mode);
++  write_csr(2, LEN_CSR, bdf, 0x20);
++  write_csr(2, ATS_MODE_CSR, bdf, READ_REQUEST);
++
++  // Spin on step counter getting to 5, which doesn't work at the moment
++
++  unsigned step = 0;
++
++  while (step != (READ_REQUEST+1))
++    read_csr(2, ATS_MODE_CSR, bdf, &step);
++
++  unsigned val_lo, val_hi;
++
++  read_csr(2, HOST_BUFF_HI, bdf, &val_hi);
++  read_csr(2, HOST_BUFF_LO, bdf, &val_lo);
++
++  unsigned long to_return = (unsigned long)val_lo;
++  to_return |= ((unsigned long)val_hi) << 32;
++  return(to_return);
++
++}
++
++
++unsigned long untranslated_read(unsigned long addr) {
++
++  return(do_read(addr, UNTRANSLATED));
++}
++
++unsigned long translated_read(unsigned long addr) {
++
++  return(do_read(addr, TRANSLATED));
++}
++
++
++int main(int argv, char ** argc) {
++
++  struct xcmd_info xcmd;
++
++  printf("PID is %d\n", getpid());
++
++  memset(&xcmd, 0, sizeof(xcmd));
++  xcmd.vf = 0;
++  xcmd.if_bdf = 16384;
++
++  int fd = open("/dev/xfd", O_RDWR);
++
++  if (fd < 0)  {
++    printf("Could not open the file, it is %d\n",fd);
++    return -1;
++  }
++
++  printf("Opened fd %d\n", fd);
++  // grab me some uncached host memory,with the IOMMU allowing access from FPGA
++  
++  volatile void * addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , fd, 64*1024);
++
++  if (!addr) { 
++    printf("APP: Memory Allocation failed, returned %p\n", addr);
++    return -1;
++  }
++
++
++  // buffer should be a 4K unmapped buffer
++  
++ volatile unsigned long *buffer = (volatile unsigned long *)(addr);
++
++ printf("CPU Read 0x%016lX\n",buffer[0]);
++  printf("CPU Read 0x%016lX\n",buffer[1]);
++
++ 
++  buffer[0]  = 0x5AF1F15A76543210L;
++  buffer[1]  = 0xF1F15A5A76543211L;
++
++ 
++  
++  __sync_synchronize();
++  ioctl(fd, 42, buffer);
++  
++  // value is a stack allocated array of 20 values
++  unsigned value[20];
++  value[0]  = 0x00000180;
++  value[1]  = 0x00000000;
++  value[2]  = 0x00000020;
++  value[3]  = 0x00000000;
++
++  // AQL kernel dispatch packet - 512 bits = 8 64 bit words
++  value[4]  = 0x00010001;  // this is the start of the AQL packet - workgroup size y  workgroup size x  1D   0001 at the end makes it invalid
++  value[5]  = 0x00000001;
++  value[6]  = 0x38D9DADB;
++  value[7]  = 0xDCDDDEDF;
++  value[8]  = 0x48D9DADB;
++  value[9]  = 0xDCDDDEDF;
++  value[10] = 0x58D9DADC;
++  value[11] = 0xDCDDDEDF;
++  value[12] = 0x68D9DADD;
++  value[13] = 0xDCDDDEDF;
++  value[14] = 0x78D9DADE;
++  value[15] = 0xDCDDDEDF;
++  value[16] = 0x88D9DADF;
++  value[17] = 0xDCDDDEDF;
++  value[18] = 0x98D9DADF;
++
++  /*
++  // throw the lower 32-bits in this field
++  xcmd.req.reg.range_start = (unsigned long)addr & 0x00000000FFFFFFFF;
++  // throw the upper 32-bits in this field
++  xcmd.req.reg.range_end = ((unsigned long)addr & 0xFFFFFFFF00000000) >> 32;
++
++
++
++
++  unsigned va_lo_val  = xcmd.req.reg.range_start;
++  unsigned va_hi_val = xcmd.req.reg.range_end;
++  
++
++  printf("%p, range_start = %x, range_end = %x\n", addr, xcmd.req.reg.range_start, xcmd.req.reg.range_end );
++  */
++
++  set_bdf(); // Has the side effect of setting bus, device, function & bdf;
++
++  write_csr(2, ATS_MODE_CSR, bdf, RESET);
++  unsigned step;
++  read_csr(2, ATS_MODE_CSR, bdf, &step);  // step counter
++  printf("Step counter is %d\n", step);
++
++  /*
++  // Write a HSA packet
++  write_csr(2, Q_CSR + Q_READ_PTR_LO, bdf, 0);
++  write_csr(2, Q_CSR + Q_READ_PTR_HI, bdf, 0);
++  
++  write_csr(2, Q_CSR + Q_MEMORY_LO, bdf, va_lo_val+16);
++  write_csr(2, Q_CSR + Q_MEMORY_HI, bdf, va_hi_val);
++  
++  write_csr(2, ATS_MODE_CSR, bdf, QUEUE_0_CREATE);
++  step = QUEUE_0_CREATE;
++  while (step) {
++    read_csr(2, ATS_MODE_CSR, bdf, &step);  // step counter
++  }
++  printf("Empty queue created : Step counter is %d\n", step);
++  
++
++  // Lets send a kernel packet
++
++  value[2] = 0x0000000100010002L;  // this is the start of the AQL packet - workgroup size y  workgroup size x  1D   0002 at the end makes it valid
++  write_csr(2, ATS_MODE_CSR, bdf, QUEUE_0_CREATE);
++  step = QUEUE_0_CREATE;
++  while (step) {
++    read_csr(2, ATS_MODE_CSR, bdf, &step);  // step counter
++  }
++  printf("Kernel start packet sent: Step counter is %d\n", step);
++  */
++
++
++  /*
++  // Make an address translation request
++  write_csr(2, VA_LO, bdf, 0);
++  write_csr(2, VA_HI, bdf, 0);
++
++
++  write_csr(2, AT_MODE_CSR, bdf, 0x01);
++  write_csr(2, ATS_MODE_CSR, bdf, ADDRESS_TRANSLATION_REQUEST);
++
++  unsigned spin;
++  read_csr(2, 0x8, bdf, &spin);  // spin register
++  printf("Spin is %d\n", spin);
++
++  // Reset ...
++  write_csr(2, ATS_MODE_CSR, bdf, RESET);
++ 
++
++  
++  // Translated read from a PA
++  
++  unsigned long read = translated_read(0x000001234000l); // What could possibly go wrong?
++  printf("PA Read 0x%016lX\n",read);
++  */
++
++  volatile void * csr_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , fd, 0);
++
++  uint32_t * register_ptr = ( uint32_t *)(csr_addr);
++
++  // set step counter to 6
++  if ( register_ptr ) {
++    writel(6, register_ptr + ATS_MODE_CSR);
++  
++       printf("register is %d\n", *(register_ptr  +  ATS_MODE_CSR));
++  }else {
++    printf("mmap failed\n");
++  }
++
++  
++  // try mapping the csrs
++  
++  printf("CPU Read 0x%016lX\n",buffer[0]);
++  printf("CPU Read 0x%016lX\n",buffer[1]);
++  printf("CPU Read (not written) 0x%016lX\n",buffer[2]);
++  /* Do the same read from the Microblaze */
++  
++  unsigned long ut_read = untranslated_read((unsigned long)addr); // What could possibly go wrong?
++
++  printf("VA Read  0x%016lX\n",ut_read);
++  ut_read = untranslated_read(((unsigned long)addr)+8); // What could possibly go wrong?
++  printf("VA Read  0x%016lX\n",ut_read);
++  
++    
++  unsigned long at_read = address_translation((unsigned long)addr); // What could possibly go wrong?
++  printf("AT Read  0x%016lX\n",at_read);
++  
++  
++  do_write((unsigned long)addr, UNTRANSLATED, value, 2);
++  printf("First word is now %016lX\n", buffer[0]);
++  
++  unsigned long rb_read = untranslated_read((unsigned long)addr); // What could possibly go wrong?
++  printf("RB Read  0x%016lX\n",rb_read);
++
++  // Now modify the value
++
++  buffer[0] = 0x0101010102020202L;
++  printf("CPU_READ %016lX\n", buffer[0]);
++
++  unsigned long rb2_read = untranslated_read((unsigned long)addr); // What could possibly go wrong?
++  printf("RB2Read  0x%016lX\n",rb2_read);
++
++  // Go back to invalidates ...
++  write_csr(2, ATS_MODE_CSR, bdf, RESET);
++  close(fd);
++
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/hsa_command_queue.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/hsa_command_queue.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/hsa_command_queue.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/hsa_command_queue.c	2021-03-05 09:24:36.000000000 -0600
+@@ -0,0 +1,31 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "command_queue.h"
++
++/* This function is never called, it's here to check the vendor defined packets have the same definition on microblaze and x86_64*/
++
++// IF CTC macro is true, function with error attribute is optimized away.
++
++static void compile_time_contraints() {
++  CTC(sizeof(struct hsa_xilinx_packet) == 64);
++  CTC(sizeof(command_t) == 56);
++  CTC(sizeof(struct memory_operation_params) == 56);
++  CTC(sizeof(struct memory_operation_with_data) == 48);
++}
++int main() {
++
++}
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/hsa_command_queue.c.bak dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/hsa_command_queue.c.bak
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/hsa_command_queue.c.bak	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/hsa_command_queue.c.bak	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,15 @@
++#include "command_queue.h"
++
++/* This function is never called, it's here to check the vendor defined packets have the same definition on microblaze and x86_64*/
++
++// IF CTC macro is true, function with error attribute is optimized away.
++
++static void compile_time_contraints() {
++  CTC(sizeof(struct hsa_xilinx_packet) == 64);
++  CTC(sizeof(command_t) == 56);
++  CTC(sizeof(struct memory_operation_params) == 56);
++  CTC(sizeof(struct memory_operation_with_data) == 48);
++}
++int main() {
++
++}
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,25 @@
++
++EXECUTABLE_NAME := hsa-app
++
++HSA_APP_OBJS := obj/hsa-app.o
++
++DMA_UTILS_OBJS :=  $(patsubst %.c,%.o,$(wildcard ../dma-utils/*.c))
++
++HSA_APP_INCLUDES := -I../include -I../dma-utils 
++
++CFLAGS += ${HSA_APP_INCLUDES} -g -O0
++
++all : clean hsa-app
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++hsa-app : ${HSA_APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${HSA_APP_OBJS} $(DMA_UTILS_OBJS)  -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/nonsudo.sh dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/nonsudo.sh
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/nonsudo.sh	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/nonsudo.sh	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,5 @@
++export PATH=${PATH}:/home/samuelb/Development/src/dma_ip_drivers/QDMA/linux-kernel/bin
++dma-ctl qdma04000 q add idx 2 mode st dir c2h
++dma-ctl qdma04000 q start idx 2 dir c2h
++dma-ctl qdma04000 q add idx 2 mode st dir h2c
++dma-ctl qdma04000 q start idx 2 dir h2c
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/page_table_reader.py dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/page_table_reader.py
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/page_table_reader.py	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/page_table_reader.py	2021-03-05 09:27:24.000000000 -0600
+@@ -0,0 +1,48 @@
++# 
++# Copyright (C) 2021 Xilinx, Inc
++# 
++# Licensed under the Apache License, Version 2.0 (the "License"). You may
++# not use this file except in compliance with the License. A copy of the
++# License is located at
++# 
++#     http://www.apache.org/licenses/LICENSE-2.0
++# 
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++# License for the specific language governing permissions and limitations
++# under the License.
++# 
++
++#!/usr/bin/env python
++
++import os, struct
++
++def get_pfn(entry):
++    return entry & 0x7FFFFFFFFFFFFF
++
++file = open("/proc/16929/maps", "r")
++
++lines = file.readlines()
++
++for line in lines:
++    print(line)
++
++file.close();
++
++fd = os.open("/proc/16929/pagemap", os.O_RDONLY)
++
++addr = 0x7ffff7ff7000
++
++offset = (addr / 4096 ) * 8;
++
++os.lseek(fd,offset, os.SEEK_SET)
++
++chars = os.read(fd, 8)
++
++entry = struct.unpack('Q', chars)[0]
++
++pfn = get_pfn(entry)
++print "PFN: {}".format(hex(pfn))
++
++os.close(fd)
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/page_table_reader.py.bak dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/page_table_reader.py.bak
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/page_table_reader.py.bak	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/page_table_reader.py.bak	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,32 @@
++#!/usr/bin/env python
++
++import os, struct
++
++def get_pfn(entry):
++    return entry & 0x7FFFFFFFFFFFFF
++
++file = open("/proc/16929/maps", "r")
++
++lines = file.readlines()
++
++for line in lines:
++    print(line)
++
++file.close();
++
++fd = os.open("/proc/16929/pagemap", os.O_RDONLY)
++
++addr = 0x7ffff7ff7000
++
++offset = (addr / 4096 ) * 8;
++
++os.lseek(fd,offset, os.SEEK_SET)
++
++chars = os.read(fd, 8)
++
++entry = struct.unpack('Q', chars)[0]
++
++pfn = get_pfn(entry)
++print "PFN: {}".format(hex(pfn))
++
++os.close(fd)
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/sudo.sh dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/sudo.sh
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/hsa-app/sudo.sh	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/hsa-app/sudo.sh	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,6 @@
++#modprobe qdma-pf
++echo 1024 > /sys/bus/pci/devices/0000\:04\:00.0/qdma/qmax 
++#dma-ctl qdma04000 q add idx 2 mode st dir c2h
++#dma-ctl qdma04000 q start idx 2 dir c2h
++#dma-ctl qdma04000 q add idx 2 mode st dir h2c
++#dma-ctl qdma04000 q start idx 2 dir h2c
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/include/qdma_nl.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/include/qdma_nl.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/include/qdma_nl.h	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/include/qdma_nl.h	2021-03-05 07:55:02.000000000 -0600
+@@ -1,15 +1,22 @@
+ /*
+  * This file is part of the Xilinx DMA IP Core driver for Linux
+  *
+- * Copyright (c) 2018-2020,  Xilinx, Inc.
++ * Copyright (c) 2017-2020,  Xilinx, Inc.
+  * All rights reserved.
+  *
+- * This source code is licensed under both the BSD-style license (found in the
+- * LICENSE file in the root directory of this source tree) and the GPLv2 (found
+- * in the COPYING file in the root directory of this source tree).
+- * You may select, at your option, one of the above-listed licenses.
++ * This source code is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * The full GNU General Public License is included in this distribution in
++ * the file called "COPYING".
+  */
+- 
++
+ #ifndef QDMA_NL_H__
+ #define QDMA_NL_H__
+ /**
+@@ -17,7 +24,6 @@
+  * @brief This file contains the declarations for qdma netlink interfaces
+  *
+  */
+-
+ /** physical function name (no more than 15 characters) */
+ #define XNL_NAME_PF		"xnl_pf"
+ /** virtual function name */
+@@ -265,8 +271,7 @@
+ #ifdef ERR_DEBUG
+ 	"QPARAM_ERR_INFO",		/**< queue param info */
+ #endif
+-	"ATTR_MAX",
+-
++	"ATTR_MAX"
+ };
+ 
+ 
+@@ -298,13 +303,13 @@
+ #ifdef ERR_DEBUG
+ 	XNL_CMD_Q_ERR_INDUCE,	/**< induce an error*/
+ #endif
+-
++	XNL_CMD_IOMMU_MAP_PAGE,
+ 	XNL_CMD_INTR_RING_DUMP,	/**< dump interrupt ring information*/
+ 	XNL_CMD_Q_UDD,		/**< dump the user defined data */
+ 	XNL_CMD_GLOBAL_CSR,	/**< get all global csr register values */
+ 	XNL_CMD_DEV_CAP,	/**< list h/w capabilities , hw and sw version */
+ 	XNL_CMD_GET_Q_STATE,	/**< get the queue state */
+-	XNL_CMD_MAX,		/**< max number of XNL commands*/
++	XNL_CMD_MAX		/**< max number of XNL commands*/
+ };
+ 
+ /**
+@@ -330,10 +335,15 @@
+ 	"Q_CMPT",		/** XNL_CMD_Q_CMPT */
+ 	"Q_RX_PKT",		/** XNL_CMD_Q_RX_PKT */
+ 	"Q_CMPT_READ",		/** XNL_CMD_Q_CMPT_READ */
+-	"INTR_RING_DUMP",	/** XNL_CMD_INTR_RING_DUMP */
+ #ifdef ERR_DEBUG
+-	"Q_ERR_INDUCE"		/** XNL_CMD_Q_ERR_INDUCE */
++	"Q_ERR_INDUCE",		/** XNL_CMD_Q_ERR_INDUCE */	
+ #endif
++	"XNL_CMD_IOMMU_MAP_PAGE",
++	"XNL_CMD_INTR_RING_DUMP",	/**< dump interrupt ring information*/
++	"XNL_CMD_Q_UDD",		/**< dump the user defined data */
++	"XNL_CMD_GLOBAL_CSR",	/**< get all global csr register values */
++	"XNL_CMD_DEV_CAP",	/**< list h/w capabilities , hw and sw version */
++	"XNL_CMD_GET_Q_STATE"	/**< get the queue state */
+ };
+ 
+ enum qdma_queue_state {
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/include/qdma_user_reg_dump.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/include/qdma_user_reg_dump.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/include/qdma_user_reg_dump.h	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/include/qdma_user_reg_dump.h	2021-03-05 07:55:02.000000000 -0600
+@@ -4,12 +4,19 @@
+  * Copyright (c) 2018-2020,  Xilinx, Inc.
+  * All rights reserved.
+  *
+- * This source code is licensed under both the BSD-style license (found in the
+- * LICENSE file in the root directory of this source tree) and the GPLv2 (found
+- * in the COPYING file in the root directory of this source tree).
+- * You may select, at your option, one of the above-listed licenses.
++ * This source code is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * The full GNU General Public License is included in this distribution in
++ * the file called "COPYING".
+  */
+- 
++
+ #include "qdma_reg_dump.h"
+ 
+ #ifndef __QDMA_USER_REG_DUMP_H__
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/include/xdev_regs.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/include/xdev_regs.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/include/xdev_regs.h	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/include/xdev_regs.h	2021-03-05 07:55:02.000000000 -0600
+@@ -4,12 +4,19 @@
+  * Copyright (c) 2018-2020,  Xilinx, Inc.
+  * All rights reserved.
+  *
+- * This source code is licensed under both the BSD-style license (found in the
+- * LICENSE file in the root directory of this source tree) and the GPLv2 (found
+- * in the COPYING file in the root directory of this source tree).
+- * You may select, at your option, one of the above-listed licenses.
++ * This source code is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * The full GNU General Public License is included in this distribution in
++ * the file called "COPYING".
+  */
+- 
++
+ #ifndef __XDEV_REGS_H__
+ #define __XDEV_REGS_H__
+ 
+@@ -76,7 +83,8 @@
+ 	{"GLBL_DSC_ERR_LOG2",				0x27C, 0,  0, 0, 0,},
+ 	{"GLBL_INTERRUPT_CFG",				0x288, 0,  0, 0, 0,},
+ 
+-	/* QDMA_TRQ_SEL_FMAP (0x00400 - 0x7FC) * TODO: max 256, display 4 for now */
++	/* QDMA_TRQ_SEL_FMAP (0x00400 - 0x7FC) */
++	/* TODO: max 256, display 4 for now */
+ 	{"TRQ_SEL_FMAP",				0x400, 4, 0, 0, 0,},
+ 
+ 	/* QDMA_TRQ_SEL_IND (0x00800) */
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/apps/Makefile	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/apps/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -13,12 +13,23 @@
+ dma-xfer_dir = $(srcdir)/dma-xfer
+ dma-perf_dir = $(srcdir)/dma-perf
+ dma-latency_dir = $(srcdir)/dma-latency
++hsa-app_dir = $(srcdir)/hsa-app
+ 
+ export topdir
+ export bin_dir
+ 
+ all: clean apps
+ 
++.PHONY: hsa-app
++hsa-app:
++	@echo "#############################";
++	@echo "####  hsa-app   ####";
++	@echo "#############################";
++	$(MAKE) -C hsa-app
++	@cp -f $(hsa-app_dir)/hsa-app $(bin_dir)	
++
++
++
+ .PHONY: dma-from-device
+ dma-from-device:
+ 	@echo "#############################";
+@@ -34,7 +45,7 @@
+ 	@echo "###########################";
+ 	$(MAKE) -C dma-to-device
+ 	@cp -f $(dma-to-device_dir)/dma-to-device $(bin_dir)	
+-	
++
+ .PHONY: dma-xfer
+ dma-xfer:
+ 	@echo "###########################";
+@@ -68,9 +79,9 @@
+ 	@echo "########################";
+ 	$(MAKE) -C dma-latency
+ 	@cp -f $(dma-latency_dir)/dma-latency $(bin_dir)	
+-	
++
+ .PHONY: apps
+-apps: dma-ctl dma-from-device dma-to-device dma-xfer dma-perf dma-latency
++apps: dma-ctl dma-from-device dma-to-device dma-xfer dma-perf dma-latency hsa-app
+ 
+ 
+ .PHONY: clean
+@@ -99,7 +110,10 @@
+ 	@echo "####  dma-latency         ####";
+ 	@echo "#############################";
+ 	$(MAKE) -C dma-latency clean;
+-	@rm -f $(bin_dir)/dma-ctl $(bin_dir)/dma-from-device $(bin_dir)/dma-to-device $(bin_dir)/dma-xfer $(bin_dir)/dma-perf $(bin_dir)/dma-latency
++
++	$(MAKE) -C hsa-app clean;
++
++	@rm -f $(bin_dir)/dma-ctl $(bin_dir)/dma-from-device $(bin_dir)/dma-to-device $(bin_dir)/dma-xfer $(bin_dir)/dma-perf $(bin_dir)/dma-latency $(bin_dir)/hsa-app
+ 	@for dir in $(ALLSUBDIRS); do \
+ 	   echo "#######################";\
+ 	   printf "####  %-8s%5s####\n" $$dir;\
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/include/qdma_nl.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/include/qdma_nl.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/include/qdma_nl.h	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/include/qdma_nl.h	2021-03-05 07:55:02.000000000 -0600
+@@ -24,7 +24,6 @@
+  * @brief This file contains the declarations for qdma netlink interfaces
+  *
+  */
+-
+ /** physical function name (no more than 15 characters) */
+ #define XNL_NAME_PF		"xnl_pf"
+ /** virtual function name */
+@@ -272,8 +271,7 @@
+ #ifdef ERR_DEBUG
+ 	"QPARAM_ERR_INFO",		/**< queue param info */
+ #endif
+-	"ATTR_MAX",
+-
++	"ATTR_MAX"
+ };
+ 
+ 
+@@ -305,13 +303,13 @@
+ #ifdef ERR_DEBUG
+ 	XNL_CMD_Q_ERR_INDUCE,	/**< induce an error*/
+ #endif
+-
++	XNL_CMD_IOMMU_MAP_PAGE,
+ 	XNL_CMD_INTR_RING_DUMP,	/**< dump interrupt ring information*/
+ 	XNL_CMD_Q_UDD,		/**< dump the user defined data */
+ 	XNL_CMD_GLOBAL_CSR,	/**< get all global csr register values */
+ 	XNL_CMD_DEV_CAP,	/**< list h/w capabilities , hw and sw version */
+ 	XNL_CMD_GET_Q_STATE,	/**< get the queue state */
+-	XNL_CMD_MAX,		/**< max number of XNL commands*/
++	XNL_CMD_MAX		/**< max number of XNL commands*/
+ };
+ 
+ /**
+@@ -337,10 +335,15 @@
+ 	"Q_CMPT",		/** XNL_CMD_Q_CMPT */
+ 	"Q_RX_PKT",		/** XNL_CMD_Q_RX_PKT */
+ 	"Q_CMPT_READ",		/** XNL_CMD_Q_CMPT_READ */
+-	"INTR_RING_DUMP",	/** XNL_CMD_INTR_RING_DUMP */
+ #ifdef ERR_DEBUG
+-	"Q_ERR_INDUCE"		/** XNL_CMD_Q_ERR_INDUCE */
++	"Q_ERR_INDUCE",		/** XNL_CMD_Q_ERR_INDUCE */	
+ #endif
++	"XNL_CMD_IOMMU_MAP_PAGE",
++	"XNL_CMD_INTR_RING_DUMP",	/**< dump interrupt ring information*/
++	"XNL_CMD_Q_UDD",		/**< dump the user defined data */
++	"XNL_CMD_GLOBAL_CSR",	/**< get all global csr register values */
++	"XNL_CMD_DEV_CAP",	/**< list h/w capabilities , hw and sw version */
++	"XNL_CMD_GET_Q_STATE"	/**< get the queue state */
+ };
+ 
+ enum qdma_queue_state {
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/include/xfd.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/include/xfd.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/include/xfd.h	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/include/xfd.h	2021-03-05 08:51:32.000000000 -0600
+@@ -0,0 +1,22 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#ifndef XFD_HEADER_H
++#define XFD_HEADER_H
++
++#include "xfd_ioctl.h"
++
++#endif
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/include/xfd_ioctl.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/include/xfd_ioctl.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/include/xfd_ioctl.h	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/include/xfd_ioctl.h	2021-03-05 08:52:24.000000000 -0600
+@@ -0,0 +1,53 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#ifndef KFD_IOCTL_H
++#define KFD_IOCTL_H
++
++#define XFD_IOCTL_DBG_MAJOR_VERSION 0
++#define XFD_IOCTL_DBG_MINOR_VERSION 0
++
++#include <linux/types.h>
++
++/* Bunch of structs used in ioctls with XFD driver */
++
++#define XFD_IOCTL_BASE 'x'
++
++#define XFD_IOWR(nr, type) _IOWR(XFD_IOCTL_BASE, nr, type)
++#define XFD_IOR(nr, type) _IOR(XFD_IOCTL_BASE, nr, type)
++
++struct xfd_ioctl_create_queue_args {
++
++  __u64 ring_base_address; /* to KFD */  
++  __u64 write_pointer_address; /* from KFD */
++  __u64 read_pointer_address; /* from KFD */
++  
++};
++
++struct xfd_ioctl_get_bar_size{
++  __u32 bar;
++  __s32 size; // negative size is failure
++};
++
++struct xfd_ioctl_grant_access {
++  __u64 buffer_va;
++  __u64 buffer_size;
++};
++
++#define XFD_IOCTL_BAR_SIZE XFD_IOWR(0x01, struct xfd_ioctl_get_bar_size)
++#define XFD_IOCTL_GRANT_ACCESS XFD_IOR(0x02, struct xfd_ioctl_grant_access)
++
++#endif
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/libqdma/qdma_access/qdma_soft_access/qdma_soft_access.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/libqdma/qdma_access/qdma_soft_access/qdma_soft_access.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/libqdma/qdma_access/qdma_soft_access/qdma_soft_access.c	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/libqdma/qdma_access/qdma_soft_access/qdma_soft_access.c	2021-03-05 07:55:02.000000000 -0600
+@@ -3994,7 +3994,7 @@
+  *
+  * Return:	0   - success and < 0 - failure
+  *****************************************************************************/
+-int qdma_hw_error_enable(void *dev_hndl, uint32_t err_idx)
++int qdma_hw_error_enable(void *dev_hndl, enum qdma_error_idx err_idx)
+ {
+ 	uint32_t idx = 0, i = 0;
+ 	uint32_t reg_val = 0;
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/Makefile	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -212,13 +212,13 @@
+ 	@echo "installing kernel modules to $(kernel_install_path) ..."
+ 	@mkdir -p -m 755 $(kernel_install_path)
+ 	@install -v -m 644 $(bin_dir)/*.ko $(kernel_install_path)
+-	@depmod -a || true
++#	@depmod -a || true
+ 
+ .PHONY: uninstall-mods
+ uninstall-mods:
+ 	@echo "Un-installing $(kernel_install_path) ..."
+ 	@/bin/rm -rf $(kernel_install_path)/*
+-	@depmod -a
++	#@depmod -a
+ 
+ .PHONY: help
+ help:
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/Makefile	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -79,7 +79,7 @@
+   override symverfile =
+ endif
+ 
+-DRV_OBJS := nl.o cdev.o qdma_mod.o
++DRV_OBJS := nl.o cdev.o qdma_mod.o xfd_cdev.o
+ 
+ LIBQDMA_OBJS := libqdma/qdma_mbox.o libqdma/qdma_intr.o libqdma/qdma_st_c2h.o \
+ 	libqdma/qdma_thread.o libqdma/libqdma_export.o libqdma/qdma_context.o \
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/nl.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/nl.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/nl.c	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/nl.c	2021-03-05 07:55:02.000000000 -0600
+@@ -22,7 +22,21 @@
+ #include <linux/version.h>
+ #include <linux/kernel.h>
+ #include <linux/pci.h>
++#include <linux/iommu.h>
++#include <linux/device.h>
++
++#include <linux/mm.h>
++#include <linux/pfn.h>
++
++#include <linux/sched/mm.h>
++#include <linux/rmap.h>
++
++#include <linux/pid.h>
++#include <linux/sched.h>
++
+ #include <net/genetlink.h>
++#include <arch/x86/include/asm/set_memory.h>
++
+ 
+ #include "libqdma/libqdma_export.h"
+ #include "qdma_mod.h"
+@@ -202,6 +216,8 @@
+ static int xnl_err_induce(struct sk_buff *skb2, struct genl_info *info);
+ #endif
+ 
++static int xnl_iommu_map_page(struct sk_buff *, struct genl_info *);
++
+ static struct genl_ops xnl_ops[] = {
+ 	{
+ 		.cmd = XNL_CMD_DEV_LIST,
+@@ -502,8 +518,21 @@
+ #endif
+ #endif
+ 		.doit = xnl_err_induce,
+-	}
++	},
++#endif
++       	{
++	  .cmd = XNL_CMD_IOMMU_MAP_PAGE,
++#ifdef RHEL_RELEASE_VERSION
++#if RHEL_RELEASE_VERSION(8, 3) > RHEL_RELEASE_CODE
++		.policy = xnl_policy,
++#endif
++#else
++#if KERNEL_VERSION(5, 2, 0) > LINUX_VERSION_CODE
++		.policy = xnl_policy,
++#endif
+ #endif
++		.doit = xnl_iommu_map_page,
++	}
+ };
+ 
+ static struct genl_family xnl_family = {
+@@ -1387,7 +1416,294 @@
+ 	return rv;
+ }
+ 
++struct anon_vma * get_page_anon_vma(struct page * page) {
++  unsigned long mapping;
++
++  page = compound_head(page);
++  mapping = (unsigned long)(page->mapping);
++  if((mapping & PAGE_MAPPING_FLAGS) != PAGE_MAPPING_ANON) return NULL;
++ 
++  mapping &= ~PAGE_MAPPING_FLAGS;
++  return (void *)(mapping);
++}
++
++
++// maps user pages and pins in memory
+ 
++unsigned obtain_user_pages(unsigned pidnum,  unsigned long base,
++			   size_t count, struct page ** pages) {
++  
++  // start is page aligned address
++  unsigned num_pages = 0;
++  struct task_struct * task;
++  struct mm_struct * mm;
++
++  // struct vm_area_struct * vma;
++  unsigned long flags;
++  int locked;
++ 
++  struct pid * ps = find_get_pid(pidnum);
++  task = get_pid_task(ps, PIDTYPE_PID);
++
++  flags = FOLL_WRITE;
++  locked = 1;
++
++  if (task) {
++    mm = task->mm;
++    pr_info("found task for PID %d\n", pidnum);
++  
++  
++    // acquire mmap lock
++    //mmap_read_lock(task->mm);
++    down_read(&mm->mmap_sem);
++    pr_info("Trying to pin %lx and %ld bytes\n", base,count);
++ 
++    /* Need to revisit this so that we can map more than one page*/
++
++    // Get Pages - don't have to hold write lock, don't need VMAs
++
++    //take different approach. Modify vma protections and page_mkclean.
++
++    // all the mappings will be made read_only, and caches are flushed. Future attempts at write-access will set protection bits?
++    
++    
++    num_pages = get_user_pages_remote(
++		task, 
++		mm,
++		base, 1,
++		flags,
++		pages,
++		NULL, NULL);
++
++    if ( num_pages == 1) {
++      pr_info("VA=%lx,PA=%llx\n",base, page_to_phys(*pages));
++      if ( get_page_anon_vma(*pages)) {
++	pr_info("Page is mapped into anon_vma\n");
++	
++	/*	if ( page_mkclean(*page) ) {
++	  pr_info("Unmap succeeded\n");
++	} else {
++	  pr_info("Unmap failed\n");
++	  }*/
++	
++      } else {
++	pr_info("Not in the anon_vma\n");
++      }
++    }
++
++    
++    
++    // now have the physical pages we want to remap in memory
++
++    pr_info("mapping->%p",(*pages)->mapping);
++    
++    // unmap_mapping_range((*pages)->mapping, base, 4096, false);
++    up_read(&mm->mmap_sem);
++    
++    // now may need to edit the VMAs. 
++    /* down_write(&mm->mmap_sem);
++
++    vma = find_vma(mm, base);
++    
++    if (vma) {
++      pr_info("VMA still exists\n");	
++    } else {
++      pr_info("VMA has disappeared\n");
++    }
++    
++    up_write(&mm->mmap_sem);
++    */
++   
++    
++    // unmap the mapping rang    
++      //     pr_info("Pinned %d Pages\n", num_pages);	      
++	   
++
++	      // grab the semaphore for write;
++	      //	 down_write(&mm->mmap_sem);
++
++      //      pr_info("Num Pages Pinned : %d\n", num_pages);
++	      
++	      //  vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
++
++      
++      //		pr_info("Start=%lx, End =%lx\n", vma->vm_start, vma->vm_end);
++      //		pr_info("Flags=%lx\n",vma->vm_flags);
++		// READ, WRITE, SHARED, MAYREAD, MAYWRITE, MAYEXEC, MAYSHARE
++
++		//	vma->vm_flags |= VM_IO | VM_PFNMAP | VM_DONTEXPAND;
++		//	up_write(&mm->mmap_sem);
++   // may need to artificially increment reference counter to stop deallocation, but it would make sense if this function didn't do deallocation ( allowing writeback to IO). 
++	
++		//	down_write(&mm->mmap_sem);
++	       
++		/*		remap_pfn_range(vma,
++				base,
++				 PFN_DOWN(page_to_phys(*pages)),
++				// is this correct? might plausibly be in a larger declared vma?
++				4096,
++				vma->vm_page_prot);
++		*/
++			// up_write(&mm->mmap_sem);
++      //	   pr_info("Remapped %d Pages\n", num_pages);
++	
++
++		   //PGD->PUD->PMD->PTE
++		   
++       
++     // release mmap lock
++	      //  if (locked) {
++	
++		// }
++	     
++  } else {
++    pr_info("Could Not find PID\n");
++  }
++
++    // flush cache for these pages 
++
++  if ( num_pages < 0) {
++    return 0;
++  }
++  
++    return num_pages;
++  }
++
++void map_pages_into_io(struct iommu_domain * domain,unsigned long iova,
++		       unsigned count, struct page * pages) {
++
++   phys_addr_t paddr;
++  size_t size = 4096;
++  int prot = IOMMU_READ | IOMMU_WRITE; //rw
++  // unsigned long iova = 0;
++  unsigned i;
++  unsigned res;
++  
++  for ( i = 0 ; i < count ; i++) {
++    // call page_to_phys(page) for each page
++    paddr = page_to_phys(pages + i); // not tested for more than one page yet. 
++    res = iommu_map(domain, iova, paddr, size, prot);
++    pr_info("Result is %d\n", res);
++    // then call iommu_map(domain, iova, paddr, size, prot); 
++    }
++  
++ 
++};
++
++static int xnl_iommu_map_page ( struct sk_buff *skb2, struct genl_info *info) {
++
++	char * buf;
++	int rv = 0;
++	struct device * dev;
++	struct xlnx_pci_dev * xpdev;
++	struct pci_dev * pdev;
++	struct iommu_group * group;
++	struct iommu_domain * dom;
++	struct nlattr * attr_lo;
++	struct nlattr * attr_hi;
++	struct page * pagelist;
++	size_t size;
++	unsigned pidnum;
++	unsigned pagecount = 0;
++
++	unsigned long base = 0;
++
++	
++	if (info == NULL)
++	  return 0;
++
++	//dom = 0;
++	 xpdev = xnl_rcv_check_xpdev(info);
++
++	 attr_lo = info->attrs[XNL_ATTR_RANGE_START];
++
++	 pidnum = info->nlhdr->nlmsg_pid;
++
++	 pr_info("creating mapping into PID %d\n", pidnum);
++	 
++	 if (attr_lo) {
++	   pr_info("attribute_lo is %x\n", nla_get_u32(attr_lo));
++	   base |= (unsigned long )nla_get_u32(attr_lo);
++	 } else {
++	      pr_info("attribute_lo is not present");
++	 }
++	 
++	 attr_hi =  info->attrs[XNL_ATTR_RANGE_END];
++
++	 if (attr_hi) {
++	   pr_info("attribute_hi is %x\n", nla_get_u32(attr_hi));
++	   base |= (((unsigned long)(nla_get_u32(attr_hi))) << 32);
++	 } else {
++	   pr_info("attribute_hi is not present");
++	 }
++
++	 // base is page aligned 4K userspace virtual address
++	 
++	 // size is distance to next 4K boundary
++
++	 size = 4096 -(base & 0xFFF);
++	 base &= 0xFFFFFFFFFFFFF000;
++
++	 // allocate a single entry in pagelist
++	 // pagelist = (struct page *)kmalloc(sizeof(struct page *), GFP_KERNEL);
++	 
++	 pagecount = obtain_user_pages(pidnum, base, size, &pagelist);
++
++
++	
++	buf = xnl_mem_alloc(XNL_RESP_BUFLEN_MAX, info);
++	if (!buf)
++	   return -ENOMEM;
++	
++	if ( xpdev != NULL ) { 
++	// copy hi into buffer
++	  pdev = xpdev->pdev;
++	  dev = (&pdev->dev);
++	  
++	  if (&pdev->dev) {
++	    pr_info("Driver still has device with iommu group %d.\n",iommu_group_id((&pdev->dev)->iommu_group));
++	  }
++
++	  //TODO: Replace this ugly nest of error reporting with gotos at bottom of function
++	  if (dev) {
++	    if (device_iommu_mapped(dev)) { 
++	    
++	    group =  iommu_group_get( dev);
++	    if (group) {
++	      dom = iommu_get_domain_for_dev(dev);
++	      
++	     if (dom) {
++	       strncpy(buf, "Found Domain \n", XNL_RESP_BUFLEN_MAX);
++
++	       // Call iommu_map
++	       map_pages_into_io(dom, base, pagecount, pagelist);
++	       
++	     } else {
++	       strncpy(buf, "Found Domain Group but domain is NULL \n", XNL_RESP_BUFLEN_MAX);
++	     }
++	      
++	    } else {
++	      strncpy(buf, "No Domain Group \n", XNL_RESP_BUFLEN_MAX);
++	    }
++	    }
++	    else {
++	      strncpy(buf, "Device_iommu_mapped_is_null\n", XNL_RESP_BUFLEN_MAX);
++	    }
++	  } else {
++	    strncpy(buf, "No Device Pointer \n", XNL_RESP_BUFLEN_MAX);
++	  }
++
++	} else { 
++	   strncpy(buf, "Xilinx Idx not found ", XNL_RESP_BUFLEN_MAX);
++	}
++
++	if ( pagelist) {
++	  // kfree(pagelist);
++	}
++	
++	rv = xnl_respond_buffer(info, buf, strlen(buf), rv);
++	return rv;
++}
+ 
+ static int xnl_get_queue_state(struct sk_buff *skb2, struct genl_info *info)
+ {
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/qdma_mod.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/qdma_mod.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/qdma_mod.c	2020-10-07 15:58:55.000000000 -0500
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/qdma_mod.c	2021-03-05 07:55:02.000000000 -0600
+@@ -29,9 +29,12 @@
+ #include <linux/pci.h>
+ #include <linux/aer.h>
+ #include <linux/vmalloc.h>
++#include <linux/iommu.h>
++
+ 
+ #include "nl.h"
+ #include "libqdma/xdev.h"
++#include "xfd_cdev.h"
+ 
+ /* include early, to verify it depends only on the headers above */
+ #include "version.h"
+@@ -74,9 +77,9 @@
+ 
+ static int xpdev_qdata_realloc(struct xlnx_pci_dev *xpdev, unsigned int qmax);
+ 
+-static int xpdev_map_bar(struct xlnx_pci_dev *xpdev,
++int xpdev_map_bar(struct xlnx_pci_dev *xpdev,
+ 		void __iomem **regs, u8 bar_num);
+-static void xpdev_unmap_bar(struct xlnx_pci_dev *xpdev, void __iomem **regs);
++void xpdev_unmap_bar(struct xlnx_pci_dev *xpdev, void __iomem **regs);
+ 
+ #ifdef __QDMA_VF__
+ void qdma_flr_resource_free(unsigned long dev_hndl);
+@@ -1024,6 +1027,20 @@
+ 	return 0;
+ }
+ 
++struct xlnx_pci_dev * xpdev_list_head(void) {
++  // need to get bdf, or add function to return the first in the list
++  
++  	struct xlnx_pci_dev *xpdev, *tmp;
++
++	mutex_lock(&xpdev_mutex);
++	list_for_each_entry_safe(xpdev, tmp, &xpdev_list, list_head) {
++			mutex_unlock(&xpdev_mutex);
++			return xpdev;
++	}
++	mutex_unlock(&xpdev_mutex);
++	return NULL;
++}
++
+ struct xlnx_pci_dev *xpdev_find_by_idx(unsigned int idx, char *buf, int buflen)
+ {
+ 	struct xlnx_pci_dev *xpdev, *tmp;
+@@ -1382,7 +1399,7 @@
+ 	return NULL;
+ }
+ 
+-static int xpdev_map_bar(struct xlnx_pci_dev *xpdev,
++int xpdev_map_bar(struct xlnx_pci_dev *xpdev,
+ 		void __iomem **regs, u8 bar_num)
+ {
+ 	int map_len;
+@@ -1401,7 +1418,7 @@
+ 	return 0;
+ }
+ 
+-static void xpdev_unmap_bar(struct xlnx_pci_dev *xpdev, void __iomem **regs)
++void xpdev_unmap_bar(struct xlnx_pci_dev *xpdev, void __iomem **regs)
+ {
+ 	/* unmap BAR */
+ 	if (*regs) {
+@@ -1549,6 +1566,11 @@
+ 			DRV_MODE);
+ 	conf.vf_max = 0;	/* enable via sysfs */
+ 
++	if (&pdev->dev) {
++	  pr_info("Driver has device with iommu group %d.\n",iommu_group_id((&pdev->dev)->iommu_group));
++	}
++
++	
+ #ifndef __QDMA_VF__
+ 	conf.master_pf = extract_mod_param(pdev, MASTER_PF);
+ 	if (conf.master_pf)
+@@ -1876,9 +1898,16 @@
+ 		return rv;
+ 
+ 	rv = qdma_cdev_init();
++	
+ 	if (rv < 0)
+ 		return rv;
+ 
++	rv = xfd_chardev_init();
++	
++	if (rv < 0) {
++	  return rv;
++	}
++	
+ 	return pci_register_driver(&pci_driver);
+ }
+ 
+@@ -1888,7 +1917,7 @@
+ 	pci_unregister_driver(&pci_driver);
+ 
+ 	xlnx_nl_exit();
+-
++	xfd_chardev_exit();
+ 	qdma_cdev_cleanup();
+ 
+ 	libqdma_exit();
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/xfd_cdev.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/xfd_cdev.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/xfd_cdev.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/xfd_cdev.c	2021-03-05 08:56:12.000000000 -0600
+@@ -0,0 +1,858 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++
++#include <linux/mm.h>
++#include <linux/mutex.h>
++#include <linux/device.h>
++#include <linux/sched.h>
++#include <linux/srcu.h>
++#include <linux/hashtable.h>
++#include <linux/slab.h>
++#include <linux/io.h>
++#include <linux/ioport.h>
++
++#include <linux/iommu.h>
++
++
++#include "xfd_qdma.h"
++#include "qdma_mod.h"
++#include "libqdma/xdev.h"
++
++#include "../include/xfd.h"
++
++#include <asm-generic/cacheflush.h>
++//#include <asm-generic/uaccess.h>
++
++
++#ifdef CONFIG_X86
++#include <asm/set_memory.h>
++#endif
++
++// pull this in from rest of module
++int xpdev_map_bar(struct xlnx_pci_dev *xpdev,
++		  void __iomem **regs, u8 bar_num);
++void xpdev_unmap_bar(struct xlnx_pci_dev *xpdev, void __iomem **regs);
++
++static const char xfd_dev_name[]="xfd";
++
++static int xfd_char_dev_major = -1;
++static struct class * xfd_class;
++struct device * xfd_device;
++
++static int xfd_open(struct inode * inode, struct file * filep);
++static int xfd_mmap(struct file * filp, struct vm_area_struct * vma);
++static int xfd_release(struct inode *inode, struct file *file);
++static long xfd_ioctl(struct file *, unsigned int, unsigned long);
++
++static ssize_t xfd_dbg_write(struct file *, const char *, size_t, loff_t *);
++static ssize_t xfd_dbg_read(struct file *, char *, size_t, loff_t *);
++static int  mmap_bar_into_user_space( struct xlnx_pci_dev *, struct vm_area_struct *    , unsigned int);
++static loff_t xfd_llseek(struct file *file, loff_t off, int whence);
++static int get_bar_size_in_bytes(unsigned int );
++  
++static const struct file_operations xfd_fops = {
++  .owner = THIS_MODULE,
++  .open = xfd_open,
++  .release = xfd_release,
++  .mmap = xfd_mmap,
++  .unlocked_ioctl = xfd_ioctl,
++  .write = xfd_dbg_write,
++  .read = xfd_dbg_read,
++  .llseek = xfd_llseek,
++ 
++};
++
++struct xfd_process {
++  // reference counter
++  struct kref ref;
++  struct hlist_node xfd_processes;
++  struct mm_struct * mm;
++
++  // track which pcie devices you've associated with this process. 
++
++  // track what host_memory you've allocated to the process,
++  // use mmu_notifier release() subscription to return to GFP pool on process exit.
++
++  // may need to register a snapshot topology?
++  
++};
++
++static DEFINE_MUTEX(xfd_processes_mutex);
++
++DEFINE_HASHTABLE(xfd_processes_table, 5);
++
++DEFINE_SRCU(xfd_processes_srcu);
++
++
++static char * xfd_devnode(struct device * dev, umode_t * mode) {
++  
++  if (mode && dev->devt == MKDEV(xfd_char_dev_major, 0))
++    *mode = 0666;
++  
++  return NULL;
++}
++
++ struct page * walk_page_table(unsigned long);
++
++void xfd_chardev_exit(void) {
++  device_destroy(xfd_class, MKDEV(xfd_char_dev_major, 0));
++  class_destroy(xfd_class);
++  unregister_chrdev(xfd_char_dev_major, xfd_dev_name);
++}
++
++int xfd_chardev_init(void) {
++
++  xfd_char_dev_major = register_chrdev(0,xfd_dev_name, &xfd_fops);
++
++  if ( xfd_char_dev_major < 0) {
++    pr_debug("Error with chardev");
++  }
++  
++  xfd_class = class_create(THIS_MODULE,xfd_dev_name);
++  
++  xfd_class->devnode = xfd_devnode;
++
++  xfd_device = device_create(xfd_class,
++			     NULL,
++			     MKDEV(xfd_char_dev_major, 0),
++			     NULL,
++			     xfd_dev_name);
++
++  return 0;
++  
++}
++
++static struct xfd_process *  find_process_by_mm(const struct mm_struct * mm) {
++
++  struct xfd_process * process;
++  hash_for_each_possible_rcu(xfd_processes_table, process, xfd_processes, (uintptr_t)mm) \
++    if ( (process->mm) == mm) return process; 
++  
++
++  return NULL;
++}
++
++static struct xfd_process * find_xfd_process(const struct task_struct * thread) {
++  struct xfd_process * p;
++  int idx;
++  idx = srcu_read_lock(&xfd_processes_srcu);
++  p = find_process_by_mm(thread->mm);
++  // increment reference counter for process
++  if (p) kref_get(&p->ref);
++  srcu_read_unlock(&xfd_processes_srcu, idx);
++  return p;
++  
++};
++
++
++struct xfd_process * create_xfd_process(struct task_struct * thread) {
++  struct xfd_process * process;
++
++  // allocate a process struct
++  process = kzalloc(sizeof(*process), GFP_KERNEL);
++
++  kref_init(&process->ref);
++  process->mm = thread->mm;
++
++  hash_add_rcu(xfd_processes_table, &process->xfd_processes, (uintptr_t)process->mm);
++  
++  return process;
++}
++
++struct xfd_process * xfd_obtain_process( struct task_struct * thread) {
++
++  struct xfd_process * process;
++
++  
++  mutex_lock(&xfd_processes_mutex) ;
++
++  process = find_xfd_process(thread);
++
++  if( ! process ) {
++    process = create_xfd_process(thread);
++  }
++
++  
++  mutex_unlock(&xfd_processes_mutex);
++	     
++  /* increment the reference counter for the thread mm */
++
++  /* Create a process object to hold data about the process */
++ 
++  /* decrement the reference counter for the thread mm */
++
++  /* return newly generated process */
++
++  return NULL;
++  
++};
++
++
++
++
++
++static loff_t xfd_llseek(struct file *file, loff_t off, int whence) {
++	loff_t newpos = 0;
++	newpos = off;
++	
++	if (newpos < 0)
++		return -EINVAL;
++	
++	file->f_pos = newpos;
++
++	pr_info("pos=%lld\n", (signed long long)newpos);
++	return newpos;
++};
++
++static int xfd_open(struct inode * inode, struct file * filep) {
++
++  // find the unique process for this calling process. 
++  struct xfd_process * process = find_xfd_process(current);
++
++  // stash it in the private data of the file
++  filep->private_data = process;
++
++  pr_info("Opened XFD driver\n");
++  
++  return 0;
++};
++
++
++
++//static struct xfd_process * find_xfd_process(const struct task_struct * thread) {
++
++  /* grab read lock */
++  
++  /* p = find_xfd_process_by_mm(thread->mm);
++  if ( p) {
++    // increment the reference counter for the process 
++    kref_get(&p->ref);
++    }
++  */
++  
++   /* release the read lock */
++  
++//  return NULL;
++//}
++
++
++
++static int xfd_release(struct inode *inode, struct file *filep) {
++
++  pr_info("RELEASE\n");
++  return 0;
++};
++
++
++/* only call this in a context where the mm_sem is held for reading */
++int xfd_obtain_user_pages(struct xfd_process * process,  struct vm_area_struct * vma) {
++  
++  // start is page aligned address
++  unsigned num_pages = 0;
++ 
++  //struct page * pages;
++  struct mm_struct * mm;
++  unsigned long flags;
++  int requested_pages;
++  
++
++  if (current) {
++    mm = current->mm;
++
++ 
++    // When called in mmap context, holds write_lock, no need for down_read(&mm->mmap_sem);
++   
++    /* Need to revisit this so that we can map more than one page*/
++
++    // Get Pages - don't have to hold write lock, don't need VMAs
++
++    requested_pages = ((vma->vm_end - vma->vm_start + PAGE_SIZE -1) >> (PAGE_SHIFT));
++    flags = FOLL_WRITE;
++    
++    pr_info("Trying to pin %lx and %ld bytes, %d pages\n", vma->vm_start,vma->vm_end - vma->vm_start, requested_pages);
++
++    pr_info("Flags are %lx\n", vma->vm_flags);
++    
++    num_pages = get_user_pages_remote(current,
++	        mm,
++		vma->vm_start, requested_pages,
++		flags,
++		NULL,
++		NULL, NULL);
++    
++    // When called in mmap context, holds write_lock, no need for up_read(&mm->mmap_sem);
++
++  
++  } else {
++    pr_info("Task is invalid\n");
++    return -1;
++  }
++
++    return num_pages;
++  }
++
++
++
++struct iommu_domain * qdma_iommu_domain(void) {
++  struct device * dev;
++  struct xlnx_pci_dev * xpdev;
++  struct pci_dev * pdev;
++  struct iommu_group * group;
++
++
++  xpdev = xpdev_list_head();
++
++  if (!xpdev) goto qdma_iommu_failure_list_empty;
++		
++  pdev = xpdev->pdev;
++
++  if (!pdev) goto qdma_iommu_failure_physical_device;
++
++  dev = &(pdev->dev);
++	       
++  if (! dev) goto qdma_iommu_failure_no_device;
++
++  group = dev->iommu_group;
++
++  if (!group) goto qdma_iommu_domain_failure_no_group;
++     
++  if (! device_iommu_mapped(dev) ) goto qdma_iommu_failure;
++  
++  /* Return if Success */
++  return iommu_get_domain_for_dev(dev);
++ 
++  
++  /* Return on failure */
++ qdma_iommu_failure_list_empty:
++  pr_info("Driver has an empty pdev list\n"); return NULL;
++ qdma_iommu_failure_physical_device:
++    pr_info("Driver has no physical device\n");   return NULL;
++ qdma_iommu_domain_failure_no_group:
++    pr_info("Driver has no iommu group\n"); return NULL;
++ qdma_iommu_failure_no_device:
++    pr_info("No device\n"); return NULL;
++ qdma_iommu_failure:
++  return NULL;
++};
++
++  
++int register_memory_with_iommu(struct vm_area_struct * vma, const unsigned long phys) {
++
++  phys_addr_t paddr;
++  unsigned long iova;
++  size_t size = PAGE_SIZE;
++  int prot = IOMMU_READ | IOMMU_WRITE; //rw
++  size_t count ;
++  unsigned i;
++  unsigned res;
++  struct iommu_domain * domain ;
++  
++  paddr = phys;
++  iova = vma->vm_start;
++
++  domain = qdma_iommu_domain();
++
++  if (! domain) goto exit_iommu_map;
++  
++  count = ((vma->vm_end - vma->vm_start + PAGE_SIZE -1) >> (PAGE_SHIFT));
++  
++  for ( i = 0 ; i < count ; i++) {
++    pr_info("Called `iommu_map` with iova ( %lx ) , paddr ( %llx ) , size (%zu) and prot (%x) \n", iova, paddr, size, prot);
++    res = iommu_map(domain, iova, paddr, size, prot);
++    pr_info("Result is %d\n", res);
++    paddr += PAGE_SIZE;
++    iova += PAGE_SIZE;
++    }
++
++  return 0;
++  
++ exit_iommu_map :
++  pr_info("Could not find domain when registering memory\n"); 
++  return -1;
++  
++}
++
++
++
++static void xfd_vm_open(struct vm_area_struct * vma) {
++
++  pr_info("Opening VMA\n");
++};
++static void xfd_vm_close(struct vm_area_struct * vma) {
++
++  pr_info("Closing VMA\n");
++};
++
++static struct page * alloc_page;
++
++static vm_fault_t xfd_vm_fault(struct vm_fault * vmf) {
++  pr_info("VM Fault\n");
++  
++  vmf->page = alloc_page;
++  return 0;
++}
++
++static const struct vm_operations_struct myops = {
++  .fault = xfd_vm_fault,
++  .open = xfd_vm_open,
++  .close = xfd_vm_close
++};
++
++static int uncached_memory_mmap(struct vm_area_struct * vma, unsigned long * phys) {
++
++ unsigned i;
++  /* Find size in bytes*/
++  unsigned long size = vma->vm_end - vma->vm_start;
++  
++  //  *phys = 0;
++  
++  pr_info("Requesting memory map for vma->vm_start %lx\n", vma->vm_start);
++
++  alloc_page = alloc_pages(GFP_KERNEL , get_order(size));
++  
++  /* obtain a block of contiguous pages big enough to fit the mapping*/
++  //  kmem = __get_free_pages(GFP_KERNEL | __GFP_ZERO, get_order(size));
++
++
++  // order can be derived from the VMA later for freeing later (probably...)disabvma
++  
++  if (!alloc_page) {
++    return -ENOMEM;
++  }
++
++  *phys = page_to_phys(alloc_page);
++  // *phys = (__pa(kmem));
++
++  memset_io( (void *)(page_to_virt(alloc_page)), 0xff, size);
++
++  for (i = 0 ; i < 256 ; i++){
++    writeb(i,  (char *)page_to_virt(alloc_page) + i);
++  }
++  
++
++  
++  
++  vma->vm_flags =  VM_IO | VM_READ | VM_WRITE | VM_PFNMAP | VM_SHARED;
++  vma->vm_page_prot = pgprot_noncached(vm_get_page_prot(vma->vm_flags));
++  
++  pr_info("Remapping Free pages %lx into process VMA\n", *phys);
++
++  vma->vm_ops = &myops;
++  
++    // set kernel mapping of pages to uncached
++  set_memory_uc((unsigned long)(page_to_virt(alloc_page)), size >> PAGE_SHIFT);
++    // set the user space mapping of pages also to be uncached
++  remap_pfn_range(vma,
++			vma->vm_start,
++			  page_to_pfn(alloc_page),
++			  //	PFN_DOWN(__pa(kmem)),
++			   size, vma->vm_page_prot);
++
++ 
++
++
++  
++  // walk_page_table(vma->vm_start);
++
++      return 0;
++      
++   /* Can't blindly rely on freeing these pages using VMA */
++  
++};
++
++static int get_bar_size_in_bytes(unsigned int bar) {
++  int len = -1;
++  
++  struct xlnx_pci_dev * xpdev; 
++  struct xlnx_dma_dev *xdev = NULL;
++ 
++  xpdev = xpdev_list_head();
++  if (!xpdev) goto qdma_get_bar_size_failure_list_empty;
++  xdev = (struct xlnx_dma_dev *)(xpdev->dev_hndl);
++
++  len = pci_resource_len(xpdev->pdev,bar);
++  return len;
++ qdma_get_bar_size_failure_list_empty:
++  return -1;
++}
++
++static int mmap_bar_into_user_space(struct xlnx_pci_dev * xpdev , struct vm_area_struct * vma, unsigned int bar) {
++  int rv;
++  unsigned num_pages;
++  unsigned long start;
++  unsigned long len;
++
++  struct xlnx_dma_dev * xdev = (struct xlnx_dma_dev *)(xpdev->dev_hndl);
++
++
++  
++  rv = -1;
++  pr_info("MMAPing CSRs using bar %d\n", bar);
++
++  if ( (bar != xdev->conf.bar_num_config) && ( bar != xdev->conf.bar_num_user)) {
++      goto qdma_mmap_invalid_bars;
++  };
++  
++  /* May want to map bar so that we can access from the kernel */
++  
++  //  rv = xpdev_map_bar(xpdev, &xpdev->user_bar_regs,  xdev->conf.bar_num_user);
++
++  //  if(rv < 0) goto qdma_mmap_csrc_failure_remap_bars;
++
++  vma->vm_flags =  VM_IO | VM_READ | VM_WRITE | VM_PFNMAP | VM_SHARED;
++  vma->vm_page_prot = pgprot_noncached(vm_get_page_prot(vma->vm_flags));
++  
++  // assume we've mapped the user bar, try to map it into user space.
++  pr_info("Remapping CSRs into process VMA\n");
++
++    // these pages should be uncached in the kernel because they are IO
++  // set_memory_uc((unsigned long)(xpdev->user_bar_regs), 1);
++
++  if (pci_resource_flags(xpdev->pdev, bar) & IORESOURCE_UNSET) {
++    return -1;
++  }
++
++  start = pci_resource_start(xpdev->pdev, bar);
++  len = pci_resource_len(xpdev->pdev,bar);
++  
++  num_pages = ((len + PAGE_SIZE -1) >> (PAGE_SHIFT));
++  
++  pr_info("remapping phys addr %lx and %ld size and %d pages \n",  start, len, num_pages);
++    // set the user space mapping of pages also to be uncached
++
++    rv = io_remap_pfn_range(vma,
++			vma->vm_start,
++			    PFN_DOWN(start),
++			    // user may have only requested a portion of the mapped bar. 
++			    min ( (num_pages * PAGE_SIZE), (vma->vm_end - vma->vm_start))  ,
++			    vma->vm_page_prot);
++  
++  
++	return rv;
++
++ qdma_mmap_invalid_bars:
++	pr_err("You tried to map a bar that isn't the QDMA registers or User BAR\n");
++	return rv;
++	/*qdma_mmap_csrc_failure_remap_bars:
++	pr_err("User bar is not present\n");
++	return rv;
++	*/
++}
++
++static int xfd_mmap(struct file * filp, struct vm_area_struct * vma) {
++
++  int num_bytes_config;
++  int num_bytes_user;
++
++  int num_pages_config;
++  int num_pages_user;
++
++  int num_pages_allocated;
++  
++  unsigned long phys;
++  unsigned long offset;
++
++  struct xlnx_pci_dev * xpdev;
++  struct xlnx_dma_dev * xdev;
++  int ret;
++  
++  offset = vma->vm_pgoff;
++
++  num_bytes_config = get_bar_size_in_bytes(0);
++  num_bytes_user = get_bar_size_in_bytes(2);
++
++  num_pages_config =  ((num_bytes_config + PAGE_SIZE -1) >> (PAGE_SHIFT));
++  num_pages_user =  ((num_bytes_user + PAGE_SIZE -1) >> (PAGE_SHIFT));
++
++  xpdev = xpdev_list_head();
++
++  if (!xpdev) goto qdma_mmap_failure_list_empty;
++
++  xdev = (struct xlnx_dma_dev *)(xpdev->dev_hndl);
++
++   if (xdev->conf.bar_num_config < 0) {
++    pr_err("Config bar is not present\n");
++    return -EINVAL;
++  };
++  
++  if (xdev->conf.bar_num_user < 0) {
++    pr_err("User bar is not present\n");
++    return -EINVAL;
++  };
++
++  
++  // config pages are (0.. num_pages_config) inclusive
++  if ((vma->vm_pgoff >= 0) && (vma->vm_pgoff < num_pages_config)) {
++    pr_info("vma->vm_pgoff is %lx", vma->vm_pgoff);
++    return mmap_bar_into_user_space( xpdev, vma, xdev->conf.bar_num_config   );
++  }
++
++  // user pages are (num_pages_config  .. num_pages_config + num_pages_user -1) inclusive
++  if (( vma->vm_pgoff >= num_pages_config) && ( (vma->vm_pgoff < num_pages_config + num_pages_user))) {
++   pr_info("vma->vm_pgoff is %lx", vma->vm_pgoff);
++   return mmap_bar_into_user_space(xpdev, vma, xdev->conf.bar_num_user);
++  }
++
++  
++  
++  
++  /*allocate some memory from GFP */
++  ret = uncached_memory_mmap( vma, &phys );
++
++  // ret is non-zero, fail
++  if (ret ) goto xfd_mmap_exit;
++  // if for some reason, the allocated pages are managed by linux... pin them. 
++  if (! (vma->vm_flags & VM_PFNMAP) ) {
++    // area requires pinning
++    num_pages_allocated = xfd_obtain_user_pages( ( struct xfd_process *)(filp->private_data), vma);
++    if ( num_pages_allocated > 0) {
++      pr_info("Pinned %d memory pages\n", num_pages_allocated);
++    } else {
++      pr_info("Failed to Pin Pages - error %d", num_pages_allocated);
++    }
++  };
++  /* This initially registers mmapped memory with all xilinx QDMA devices */
++  ret = register_memory_with_iommu(vma, phys);
++  
++  return ret;
++  
++qdma_mmap_failure_list_empty :
++	pr_err("CSR_Remap - device not found\n");
++	return -1;
++ xfd_mmap_exit:
++  pr_info("Allocation and Mapping of memory failed with return value %d\n", ret);
++  return -1;
++
++};
++
++// use walk_page_range if/when this is not compiled as a module
++struct page * walk_page_table(unsigned long addr) {
++    pgd_t *pgd;
++    p4d_t * p4d;
++    pte_t *ptep, pte;
++    pud_t *pud;
++    pmd_t *pmd;
++  
++  struct page *page = NULL;
++  
++    struct mm_struct *mm = current->mm;
++    printk(KERN_NOTICE "MM is %p\n", (void *)(current->mm));
++    pgd = pgd_offset(mm, addr);
++    if (pgd_none(*pgd) || pgd_bad(*pgd))
++        goto out;
++    printk(KERN_NOTICE "Valid pgd");
++
++    p4d = p4d_offset(pgd, addr);
++    if (p4d_none(*p4d) || p4d_bad(*p4d))
++        goto out;
++    printk(KERN_NOTICE "Valid p4d");
++	  
++    pud = pud_offset(p4d, addr);
++    if (pud_none(*pud) || pud_bad(*pud))
++        goto out;
++    printk(KERN_NOTICE "Valid pud");
++
++    pmd = pmd_offset(pud, addr);
++    if (pmd_none(*pmd) || pmd_bad(*pmd))
++        goto out;
++    printk(KERN_NOTICE "Valid pmd");
++
++    ptep = pte_offset_map(pmd, addr);
++    if (!ptep)
++        goto out;
++    pte = *ptep;
++    page = pte_page(pte);
++    if (page) {
++      //      printk(KERN_INFO "page frame struct is @ %p", page);
++      //  printk(KERN_INFO "Original is @ %p", alloc_page);
++      printk(KERN_INFO "Page Now mapped to @ %llx", page_to_phys(page));
++      //  printk(KERN_INFO "Original is @ %llx", page_to_phys(alloc_page));
++    }
++ out:
++    return page;
++}
++
++int register_write(uint32_t offset_in_bytes, uint32_t value) {
++struct xlnx_pci_dev * xpdev;
++  int rv;
++ 
++  struct xlnx_dma_dev *xdev = NULL;
++
++  
++  rv = -1;
++  pr_info("MMAPing CSRs using user bar %d\n",xdev->conf.bar_num_user);
++  xpdev = xpdev_list_head();
++
++  if (!xpdev) goto qdma_register_write_failure_list_empty;
++
++  xdev = (struct xlnx_dma_dev *)(xpdev->dev_hndl);
++  if (xdev->conf.bar_num_user < 0) {
++    pr_err("User bar is not present\n");
++     return -EINVAL;
++  };
++  rv = xpdev_map_bar(xpdev, &xpdev->user_bar_regs,
++		     xdev->conf.bar_num_user);
++ 
++  if(rv < 0) goto qdma_register_write_failure_remap_bars;
++
++  iowrite32(value, xpdev->user_bar_regs + offset_in_bytes);
++  
++   xpdev_unmap_bar(xpdev, &xpdev->bypass_bar_regs);
++  return 0;
++		  
++ qdma_register_write_failure_remap_bars:
++	pr_err("User bar is not present\n");
++	return rv;
++ qdma_register_write_failure_list_empty :
++	pr_err("CSR_Remap - dvice not found\n");
++	return rv;
++	
++}
++
++
++int register_read(uint32_t offset_in_bytes, uint32_t* value) {
++  struct xlnx_pci_dev * xpdev;
++  int rv;
++ 
++  struct xlnx_dma_dev *xdev = NULL;
++
++  
++  rv = -1;
++  pr_info("MMAPing CSRs using user bar %d\n",xdev->conf.bar_num_user);
++  xpdev = xpdev_list_head();
++
++  if (!xpdev) goto qdma_register_read_failure_list_empty;
++
++  xdev = (struct xlnx_dma_dev *)(xpdev->dev_hndl);
++  if (xdev->conf.bar_num_user < 0) {
++    pr_err("User bar is not present\n");
++    return -EINVAL;
++  };
++  rv = xpdev_map_bar(xpdev, &xpdev->user_bar_regs,
++		     xdev->conf.bar_num_user);
++ 
++  if(rv < 0) goto qdma_register_read_failure_remap_bars;
++
++  *value = ioread32(xpdev->user_bar_regs + offset_in_bytes);
++  
++  xpdev_unmap_bar(xpdev, &xpdev->bypass_bar_regs);
++  
++  return 0;
++ qdma_register_read_failure_remap_bars:
++	pr_err("User bar is not present\n");
++	return rv;
++ qdma_register_read_failure_list_empty :
++	pr_err("CSR_Remap - dvice not found\n");
++	return rv;
++	
++};
++
++
++
++static long xfd_ioctl(struct file * file, unsigned int cmd, unsigned long user_ptr) {
++  struct vm_area_struct * vma;
++
++  struct xfd_ioctl_get_bar_size bar_cmd;
++  struct xfd_ioctl_grant_access access_cmd;
++
++  struct page * physical_page;
++  vma = NULL;
++  
++  if (cmd == XFD_IOCTL_BAR_SIZE) {
++
++    if (access_ok(user_ptr, sizeof(struct xfd_ioctl_get_bar_size))) { 
++
++      __copy_from_user(&bar_cmd, (void *)user_ptr, sizeof(struct xfd_ioctl_get_bar_size));
++      bar_cmd.size = get_bar_size_in_bytes(bar_cmd.bar);
++      __copy_to_user((void *)(user_ptr), &bar_cmd, sizeof(struct xfd_ioctl_get_bar_size));
++    } 
++  } // cmd == XFD_IOCTL_BAR_SIZE
++  else if (cmd == XFD_IOCTL_GRANT_ACCESS) {
++
++    if (access_ok(user_ptr, sizeof(struct xfd_ioctl_grant_access))) {
++      // copy arguments from userspace
++      __copy_from_user(&access_cmd, (void *)user_ptr, sizeof(struct xfd_ioctl_grant_access));
++
++    // look up VMA
++
++    vma = find_vma(current->mm, access_cmd.buffer_va);
++
++    if (!vma) {
++      pr_info( "VMA not found for address %llx", access_cmd.buffer_va );
++    }
++    
++    // look up physical address
++    physical_page = walk_page_table(access_cmd.buffer_va);
++    
++    // add to iommu mapping for device	       
++
++    if (physical_page) {
++      register_memory_with_iommu(vma, page_to_phys(physical_page)  );
++      return 0;
++    } else {
++      pr_info ( "Physical Page %llx not found\n", access_cmd.buffer_va);
++      return -1;
++    }
++    
++    } // access_ok
++
++    
++  } // cmd == XFD_IOCTL_GRANT_ACCESS
++
++  // unsigned long x;
++  
++  // struct page * pg;
++  pr_info("You did an IOCTL with %u and %lx \n", cmd, user_ptr);
++  flush_cache_mm(current->mm);
++  
++  vma = find_vma(current->mm, user_ptr);
++
++  if ( vma) {
++
++    // walk_page_table(user_ptr);
++    
++    pr_info("Found VMA\n");
++    //   x= 50000;
++    // put_user(x, (unsigned long *)user_ptr);
++    //flush_cache_mm(current->mm);
++    // writeb(0xFF,  (char *)page_to_virt(alloc_page));
++     
++    // pg = follow_page(vma, user_ptr, 0);
++    //if (pg) {
++    // pr_info("Found Page\n");
++    // }
++  }
++
++
++  
++  return 0;
++}
++
++static ssize_t xfd_dbg_write(struct file * file, const char * user_ptr, size_t size, loff_t * offset) {
++  return 0;
++}
++static ssize_t xfd_dbg_read(struct file * file, char * user_ptr, size_t size, loff_t * offset) {
++  return 0;
++};
++
++
++/*static int xfd_ioctl(struct file * file, unsigned int ioctl, unsigned long addr) {
++  return 0;
++};
++*/
++
++// in module int, call xfd_chardev_init and test for error
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/xfd_cdev.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/xfd_cdev.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/xfd_cdev.h	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/xfd_cdev.h	2021-03-05 08:57:44.000000000 -0600
+@@ -0,0 +1,23 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#ifndef XFD_CHARDEV_INIT_H
++#define XFD_CHARDEV_INIT_H
++
++int xfd_chardev_init(void) ;
++int xfd_chardev_exit(void) ;
++
++#endif
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/xfd_qdma.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/xfd_qdma.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/driver/src/xfd_qdma.h	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/driver/src/xfd_qdma.h	2021-03-05 08:56:22.000000000 -0600
+@@ -0,0 +1,22 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#ifndef XFD_QDMA_H
++#define XFD_QDMA_H
++
++struct xlnx_pci_dev * xpdev_list_head(void);
++
++#endif
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/0_csr-rw/csr-rw.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/0_csr-rw/csr-rw.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/0_csr-rw/csr-rw.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/0_csr-rw/csr-rw.c	2021-03-05 08:21:42.000000000 -0600
+@@ -0,0 +1,106 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++
++
++#include "ats.h"
++
++#include <stdio.h>
++#include <string.h>
++#include <err.h>
++#include <errno.h>
++
++#include <sys/mman.h>
++
++#include <sys/types.h>
++#include <unistd.h>
++
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++
++#include <stdint.h>
++
++
++#define STOMP      0x0
++#define GOLDEN     0x42424242
++#define IDENTIFIER 0x1fd30001
++
++
++
++int main(int argv, char ** argc) {
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++
++  
++  // BAR 2 - The ATS agent
++  write_csr(ats_register_ptr, AT_MODE_CSR,GOLDEN);
++  unsigned rb = 0;
++  rb = read_csr(ats_register_ptr, AT_MODE_CSR);
++  if (rb != GOLDEN) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: ATS CSR 0x%08X != 0x%08X\n", __FILE__, __LINE__, ver, rb, GOLDEN);
++    return -1;
++  }
++  write_csr(ats_register_ptr, AT_MODE_CSR,STOMP);
++  rb = 0;
++  rb = read_csr(ats_register_ptr, AT_MODE_CSR);
++  if (rb != STOMP) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: ATS CSR 0x%08X != 0x%08X\n", __FILE__, __LINE__, ver, rb, STOMP);
++    return -1;
++  }
++
++
++
++  unsigned qdma_config = read_csr(qdma_register_ptr, QDMA_CONFIG_BLOCK_IDENTIFIER);
++  if (qdma_config != IDENTIFIER) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: QDMA IDENTIFIER CSR 0x%08X != 0x%08X\n", __FILE__, __LINE__, ver, qdma_config, IDENTIFIER);
++    return -1;
++  }
++  // Can we write?
++  write_csr(qdma_register_ptr, QDMA_CONFIG_BLOCK_SCRATCH, STOMP);
++  //sleep(1);
++  unsigned qdma_rb = read_csr(qdma_register_ptr, QDMA_CONFIG_BLOCK_SCRATCH);
++  if (qdma_rb != STOMP) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: QDMA SCRATCH CSR 0x%08X != 0x%08X\n", __FILE__, __LINE__, ver, qdma_rb, STOMP);
++    return -1;
++  }
++  write_csr(qdma_register_ptr, QDMA_CONFIG_BLOCK_SCRATCH, GOLDEN);
++  //sleep(1);
++  qdma_rb = read_csr(qdma_register_ptr, QDMA_CONFIG_BLOCK_SCRATCH);
++  if (qdma_rb != GOLDEN) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: QDMA SCRATCH CSR 0x%08X != 0x%08X\n", __FILE__, __LINE__, ver, qdma_rb, GOLDEN);
++    return -1;
++  }
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/0_csr-rw/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/0_csr-rw/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/0_csr-rw/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/0_csr-rw/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := csr-rw
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/1_csr-rw-u64/csr-rw-u64.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/1_csr-rw-u64/csr-rw-u64.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/1_csr-rw-u64/csr-rw-u64.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/1_csr-rw-u64/csr-rw-u64.c	2021-03-05 08:22:38.000000000 -0600
+@@ -0,0 +1,58 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++
++#include "ats.h"
++
++int main(int argv, char ** argc) {
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++   
++  unsigned long pat = 0x0000002400000042L;
++
++  write_csr64(ats_register_ptr, VA_LO, pat);
++  unsigned long rb = 0;
++  rb = read_csr64(ats_register_ptr, VA_LO);
++  if (rb != pat) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: ATS CSR 0x%016lX != 0x%016lX\n", __FILE__, __LINE__, ver, rb, pat);
++    return -1;
++  }
++
++  write_csr64(qdma_register_ptr, QDMA_CONFIG_BLOCK_SCRATCH, pat);
++  rb = read_csr64(qdma_register_ptr, QDMA_CONFIG_BLOCK_SCRATCH);
++  if (rb != pat) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: QDMA CSR 0x%016lX != 0x%016lX\n", __FILE__, __LINE__, ver, rb, pat);
++    return -1;
++  }
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/1_csr-rw-u64/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/1_csr-rw-u64/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/1_csr-rw-u64/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/1_csr-rw-u64/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := csr-rw-u64
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/2_malloc/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/2_malloc/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/2_malloc/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/2_malloc/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := malloc
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/2_malloc/malloc.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/2_malloc/malloc.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/2_malloc/malloc.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/2_malloc/malloc.c	2021-03-05 08:23:04.000000000 -0600
+@@ -0,0 +1,60 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++
++#include "ats.h"
++
++int main(int argv, char ** argc) {
++
++  volatile void *ats_mem_addr;
++  
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++  
++  ats_mem_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!ats_mem_addr) {
++     printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++     return -1;
++  }
++
++  unsigned long *ats_mem_ptr = (unsigned long*)ats_mem_addr;
++  
++  unsigned long value = 0x5af15af15af15af1L;
++  ats_mem_ptr[0] = value;
++
++  if (ats_mem_ptr[0] != value) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Wrong value written to buffer[0] %016lX\n", __FILE__, __LINE__, ver, ats_mem_ptr[0]);
++  }
++  
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/31_address_translation_request/address_translation_request.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/31_address_translation_request/address_translation_request.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/31_address_translation_request/address_translation_request.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/31_address_translation_request/address_translation_request.c	2021-03-05 08:24:00.000000000 -0600
+@@ -0,0 +1,103 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++
++int main(int argv, char ** argc) {
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++  
++  // grab me some uncached host memory,with the IOMMU allowing access from FPGA
++  volatile void * addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!addr) { 
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++  // buffer should be a 4K unmapped buffer
++  volatile unsigned long *buffer = (volatile unsigned long *)(addr);
++
++  unsigned long value = 0x5af15af25af35af4L;
++  buffer[0] = value;
++
++  if (buffer[0] != value) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Wrong value written to buffer[0] %016lX\n", __FILE__, __LINE__, ver, buffer[0]);
++    return -1;
++  }
++
++  // try an address translation request which should succeed
++  do_address_transalation(ats_register_ptr, (unsigned long)addr);
++
++
++  unsigned pa0 = read_csr(ats_register_ptr, PA_LO);
++  unsigned pa1 = read_csr(ats_register_ptr, PA_HI);
++
++  unsigned long pa = (((unsigned long)pa1) << 32) + pa0;
++
++  printf("Translated PA is %016lX\n", pa);
++
++  system("dmesg | grep iommu_map | grep paddr | tail -n 1 > /tmp/31_ats.txt");
++  FILE *fp = fopen("/tmp/31_ats.txt", "r");
++  char line[256];
++  fgets(line, 256, fp);
++  char *paddr_loc = strstr(line, "paddr") + strlen("paddr ( ");
++  unsigned long pa_from_dmesg;
++  sscanf(paddr_loc, "%lX", &pa_from_dmesg);
++  printf("PA drom dmesg = %016lX\n", pa_from_dmesg);
++  system("rm -f  /tmp/31_ats.txt");
++
++  if (pa_from_dmesg != pa) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: dmesg reports a PA %016lX, ATS returns %016lX\n", __FILE__, __LINE__, ver, pa_from_dmesg, pa);
++    return -1;
++  }
++
++
++  // This exercises the same path
++  unsigned long first;
++  first = untranslated_read(ats_register_ptr, (unsigned long)addr);
++  if (first != value) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Untranslated read returned %016lX\n", __FILE__, __LINE__, ver, first);
++    return -1;
++  }
++
++  // This should fail with a spectacular message in dmesg
++  do_address_transalation(ats_register_ptr, (unsigned long)0xed1ed1eed1e00000);
++  pa0 = read_csr(ats_register_ptr, PA_LO);
++  pa1 = read_csr(ats_register_ptr, PA_HI);
++
++  pa = (((unsigned long)pa1) << 32) + pa0;
++
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++
++
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/31_address_translation_request/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/31_address_translation_request/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/31_address_translation_request/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/31_address_translation_request/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := address_translation_request
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/32_read_t_u32/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/32_read_t_u32/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/32_read_t_u32/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/32_read_t_u32/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := read_t_u32
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/32_read_t_u32/read_t_u32.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/32_read_t_u32/read_t_u32.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/32_read_t_u32/read_t_u32.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/32_read_t_u32/read_t_u32.c	2021-03-05 08:24:22.000000000 -0600
+@@ -0,0 +1,85 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++
++#include <time.h>
++#include <stdlib.h>
++
++
++int main(int argv, char ** argc) {
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++
++  // grab me some uncached host memory,with the IOMMU allowing access from FPGA
++  volatile void * addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!addr) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++  // buffer should be a 4K unmapped buffer
++  volatile unsigned *buffer = (volatile unsigned *)addr;
++
++  srand(time(NULL));
++
++  buffer[0] = (unsigned)rand();
++  buffer[1] = (unsigned)rand();
++
++  // try an address translation request which should succeed
++  do_address_transalation(ats_register_ptr, (unsigned long)addr);
++
++  unsigned pa0 = read_csr(ats_register_ptr, PA_LO);
++  unsigned pa1 = read_csr(ats_register_ptr, PA_HI);
++
++  unsigned long pa = (((unsigned long)pa1) << 32) + pa0;
++
++  // Untranslated read first
++  unsigned long first = untranslated_read(ats_register_ptr, (unsigned long)buffer);
++
++  unsigned long buffer01  = ((unsigned long)buffer[1]) << 32; 
++                buffer01 += ((unsigned long)buffer[0]); 
++
++  if (buffer01 != first) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Untranslated read failed %016lX != %016lX\n", __FILE__, __LINE__, ver, buffer01, first);
++    return -1;
++  }
++  // Translated read second
++  unsigned long second = translated_read(ats_register_ptr, (unsigned long)pa);
++  if (buffer01 != second) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Translated read failed %016lX != %016lX\n", __FILE__, __LINE__, ver, buffer01, second);
++    return -1;
++  }
++
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/33_read_t_u32_x4/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/33_read_t_u32_x4/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/33_read_t_u32_x4/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/33_read_t_u32_x4/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := read_t_u32_x4
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/33_read_t_u32_x4/read_t_u32_x4.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/33_read_t_u32_x4/read_t_u32_x4.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/33_read_t_u32_x4/read_t_u32_x4.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/33_read_t_u32_x4/read_t_u32_x4.c	2021-03-05 08:24:48.000000000 -0600
+@@ -0,0 +1,88 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++
++#include <time.h>
++#include <stdlib.h>
++
++
++int main(int argv, char ** argc) {
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++  
++  // grab me some uncached host memory,with the IOMMU allowing access from FPGA
++  volatile void * addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED, xfd_driver_fd, ALLOC_OFFSET);
++  if (!addr) { 
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++  // buffer should be a 4K unmapped buffer
++  volatile unsigned *buffer = (volatile unsigned *)addr;
++
++  srand(time(NULL));
++
++  for (int i=0;i<4;i++)
++    buffer[i] = (unsigned)rand();
++
++  // try an address translation request which should succeed
++  do_address_transalation(ats_register_ptr, (unsigned long)addr);
++
++  unsigned pa0 = read_csr(ats_register_ptr, PA_LO);
++  unsigned pa1 = read_csr(ats_register_ptr, PA_HI);
++
++  unsigned long pa = (((unsigned long)pa1) << 32) + pa0;
++
++  for (int j=0;j<2;j++) {
++    // Untranslated read first
++    unsigned long first = untranslated_read(ats_register_ptr, j*sizeof(unsigned long) + (unsigned long)buffer);
++
++    unsigned long buffer01  = ((unsigned long)buffer[j*2+1]) << 32; 
++                  buffer01 += ((unsigned long)buffer[j*2]); 
++
++   if (buffer01 != first) {
++     printf("FAIL: %s LINE %d: API VERSION %08X: Untranslated read failed %016lX != %016lX\n", __FILE__, __LINE__, ver, buffer01, first);
++     return -1;
++   }
++
++    // Translated read second
++    unsigned long second = translated_read(ats_register_ptr, j*sizeof(unsigned long) + (unsigned long)pa);
++    if (buffer01 != second) {
++      printf("FAIL: %s LINE %d: API VERSION %08X: Translated read failed %016lX != %016lX\n", __FILE__, __LINE__, ver, buffer01, second);
++      return -1;
++    }
++  }
++
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/34_write_t_u32/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/34_write_t_u32/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/34_write_t_u32/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/34_write_t_u32/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := write_t_u32
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/34_write_t_u32/write_t_u32.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/34_write_t_u32/write_t_u32.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/34_write_t_u32/write_t_u32.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/34_write_t_u32/write_t_u32.c	2021-03-05 08:25:08.000000000 -0600
+@@ -0,0 +1,92 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++
++#include <time.h>
++#include <stdlib.h>
++
++
++int main(int argv, char ** argc) {
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++  
++  // grab me some uncached host memory,with the IOMMU allowing access from FPGA
++  volatile void * addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!addr) { 
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++  // buffer should be a 4K unmapped buffer
++  volatile unsigned *buffer = (volatile unsigned *)addr;
++  unsigned value_ut[2];
++  unsigned value_t[2];
++
++  srand(time(NULL));
++
++  buffer[0] = (unsigned)rand();
++  buffer[1] = (unsigned)rand();
++  value_ut[0] = (unsigned)rand();
++  value_ut[1] = (unsigned)rand();
++  value_t[0] = (unsigned)rand();
++  value_t[1] = (unsigned)rand();
++
++  // try an address translation request which should succeed
++  do_address_transalation(ats_register_ptr, (unsigned long)addr);
++
++  unsigned pa0 = read_csr(ats_register_ptr, PA_LO);
++  unsigned pa1 = read_csr(ats_register_ptr, PA_HI);
++
++  unsigned long pa = (((unsigned long)pa1) << 32) + pa0;
++
++  // Untranslated write first
++  do_write(ats_register_ptr, (unsigned long)buffer, UNTRANSLATED, value_ut, 8);
++
++  for (int i=0;i<2;i++) {
++    if (buffer[i] != value_ut[i]) {
++      printf("FAIL: %s LINE %d: API VERSION %08X: Untranslated write failed %08X != %08X\n", __FILE__, __LINE__, ver, buffer[i], value_ut[i]);
++      return -1;
++    }
++  }
++
++  do_write(ats_register_ptr, pa, TRANSLATED, value_t, 8);
++  for (int i=0;i<2;i++) {
++    if (buffer[i] != value_t[i]) {
++      printf("FAIL: %s LINE %d: API VERSION %08X: Translated write failed %08X != %08X\n", __FILE__, __LINE__, ver, buffer[i], value_t[i]);
++      return -1;
++    }
++  }
++
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/3_read-ut-u32/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/3_read-ut-u32/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/3_read-ut-u32/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/3_read-ut-u32/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := read-ut-u32
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/3_read-ut-u32/read-ut-u32.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/3_read-ut-u32/read-ut-u32.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/3_read-ut-u32/read-ut-u32.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/3_read-ut-u32/read-ut-u32.c	2021-03-05 08:23:34.000000000 -0600
+@@ -0,0 +1,67 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++
++#include "ats.h"
++
++int main(int argv, char ** argc) {
++
++  volatile void *ats_mem_addr;
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++  
++  ats_mem_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!ats_mem_addr) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++  unsigned long *buffer = (unsigned long*)ats_mem_addr;
++
++  unsigned long value = 0x5af15af25af35af5L;
++  buffer[0] = value;
++
++  if (buffer[0] != value) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Write to buffer[0] failed failed %016lX != %016lX\n", __FILE__, __LINE__, ver, buffer[0], value);
++    return -1;
++  }
++  unsigned long first;
++  first = untranslated_read(ats_register_ptr, (unsigned long)buffer);
++  if (first != value) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Untranslated read failed %016lX != %016lX\n", __FILE__, __LINE__, ver, first, value);
++    return -1;
++  }
++
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/4_read-ut-u32-x4/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/4_read-ut-u32-x4/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/4_read-ut-u32-x4/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/4_read-ut-u32-x4/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := read-ut-u32-x4
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/4_read-ut-u32-x4/read-ut-u32-x4.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/4_read-ut-u32-x4/read-ut-u32-x4.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/4_read-ut-u32-x4/read-ut-u32-x4.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/4_read-ut-u32-x4/read-ut-u32-x4.c	2021-03-05 08:25:26.000000000 -0600
+@@ -0,0 +1,65 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++
++int main(int argv, char ** argc) {
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++  volatile void *ats_mem_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!ats_mem_addr) {
++     printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++     return -1;
++  }
++  unsigned long *buffer = (unsigned long*)ats_mem_addr;
++  // buffer should be a 4K unmapped buffer
++  unsigned long value = 0x0001000200040008L;
++  for (int i=0;i<4; i++) {
++    buffer[i] = value << (4*i);
++  }
++  for (int i=0;i<4; i++) {
++    if (buffer[i] != (value << (4*i))) {
++      printf("FAIL: %s LINE %d: API VERSION %08X: Wrong value of %016lX written to buffer[%d]\n", __FILE__, __LINE__, ver, buffer[i], i);
++      printf("FAIL : 4_read-ut-u32-x4: Wrong value written to buffer[%d] %016lX\n", i, buffer[i]);
++    }
++  }
++  for (int i=0;i<4;i++) {
++    unsigned long first;
++    first = untranslated_read(ats_register_ptr, ((unsigned long)buffer)+sizeof(unsigned long)*i);
++    if (first != (value << (4*i))) {
++      printf("FAIL: %s LINE %d: API VERSION %08X: Translated read failed %016lX for element[%d]\n", __FILE__, __LINE__, ver, first, i);
++      return -1;
++    }
++  }
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/5_write-ut-u32-rb/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/5_write-ut-u32-rb/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/5_write-ut-u32-rb/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/5_write-ut-u32-rb/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := write-ut-u32-rb
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/5_write-ut-u32-rb/write-ut-u32-rb.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/5_write-ut-u32-rb/write-ut-u32-rb.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/5_write-ut-u32-rb/write-ut-u32-rb.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/5_write-ut-u32-rb/write-ut-u32-rb.c	2021-03-05 08:25:50.000000000 -0600
+@@ -0,0 +1,83 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++
++#include <time.h>
++#include <stdlib.h>
++
++int main(int argv, char ** argc) {
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++   
++  volatile void *ats_mem_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!ats_mem_addr) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++
++  unsigned volatile *buffer = (unsigned *)ats_mem_addr;
++
++  srand(time(NULL));
++
++  buffer[0] = (unsigned)rand();
++  buffer[1] = (unsigned)rand();
++
++  unsigned value[8];
++  value[0] = (unsigned)rand();
++  value[1] = (unsigned)rand();
++
++  do_write(ats_register_ptr, (unsigned long)ats_mem_addr, UNTRANSLATED, value, 4);
++
++  unsigned long first;
++  first = untranslated_read(ats_register_ptr, (unsigned long)ats_mem_addr);
++
++  // Okay, lets sift through the results
++  if (value[0] != buffer[0]) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Host readback %08X for [0], expected %08X\n", __FILE__, __LINE__, ver, buffer[0], value[0]);
++    return -1;
++  }
++  if (value[1] == buffer[1]) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Host readback %08X for [1], expected %08X\n", __FILE__, __LINE__, ver, buffer[1], value[1]);
++    return -1;
++  }
++
++  if ((first & 0xffffffffL) != (unsigned long)(value[0])) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: MB readback %08lX for [1], expected %08X\n", __FILE__, __LINE__, ver, first & 0xffffffffL, value[0]);
++    return -1;
++  }
++
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/61_pattern-write/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/61_pattern-write/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/61_pattern-write/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/61_pattern-write/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,22 @@
++
++EXECUTABLE_NAME := pattern-write
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/61_pattern-write/pattern-write.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/61_pattern-write/pattern-write.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/61_pattern-write/pattern-write.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/61_pattern-write/pattern-write.c	2021-03-08 13:34:32.066496000 -0600
+@@ -0,0 +1,85 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++#include <time.h>
++#include <stdlib.h>
++
++int main(int argv, char ** argc) {
++
++  volatile void *ats_mem_addr;
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++  ats_mem_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!ats_mem_addr) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++  unsigned volatile *buffer = (unsigned *)ats_mem_addr;
++
++  srand(time(NULL));
++
++  // Lets do a series of ascending pattern writes
++  // First stomp over the whole buffer with FF's
++
++  for (int test=0;test<4;test++) {
++
++    int len_b = 1+((unsigned)rand()%23);
++    for (int b=0;b<4096/sizeof(unsigned); b++) {
++      buffer[b] = 0xffffffff;
++    }
++    // Request a patter write of the appropriate length
++    do_pattern_write(ats_register_ptr, (unsigned long)ats_mem_addr, len_b);
++    printf("Length %d: ", len_b);
++    // Check the bytes
++    for (int b=0;b<len_b; b++) {
++      unsigned int i_expected = b/4;
++      unsigned char c_expected = (i_expected >> ((b % 4)*8)) & 0xff;
++      unsigned char c_pattern = *(((unsigned char *)ats_mem_addr)+b);
++      if (c_pattern != c_expected) {
++        printf("\nFAIL: %s LINE %d: API VERSION %08X: b = %d, For pattern write length %d, expected %02X from %08X, readback %02X\n", __FILE__, __LINE__, ver, b, len_b, (unsigned int)c_expected, i_expected, (unsigned int)c_pattern);
++        return -1;
++      }
++    }
++    printf("PASS!\n");
++    // Let's do a ragged thing
++    unsigned to_write = 0x69; // why not
++    do_write(ats_register_ptr, (unsigned long)ats_mem_addr, UNTRANSLATED, &to_write, 4);
++
++    unsigned array_to_write[2] = {0xf001, 0xba11};
++    do_write(ats_register_ptr, (unsigned long)ats_mem_addr, UNTRANSLATED, (unsigned*) &array_to_write, 8);
++  }
++
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/6_write-ut-u32-hostrb/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/6_write-ut-u32-hostrb/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/6_write-ut-u32-hostrb/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/6_write-ut-u32-hostrb/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,22 @@
++
++EXECUTABLE_NAME := write-ut-u32-hostrb
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/6_write-ut-u32-hostrb/write-ut-u32-hostrb.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/6_write-ut-u32-hostrb/write-ut-u32-hostrb.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/6_write-ut-u32-hostrb/write-ut-u32-hostrb.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/6_write-ut-u32-hostrb/write-ut-u32-hostrb.c	2021-03-05 08:26:10.000000000 -0600
+@@ -0,0 +1,74 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++#include <time.h>
++#include <stdlib.h>
++
++int main(int argv, char ** argc) {
++
++  volatile void *ats_mem_addr;
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++  ats_mem_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!ats_mem_addr) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++  unsigned volatile *buffer = (unsigned *)ats_mem_addr;
++
++  srand(time(NULL));
++
++  buffer[0] = (unsigned)rand();
++  buffer[1] = (unsigned)rand();
++
++  unsigned value[8];
++  value[0] = (unsigned)rand();
++  value[1] = (unsigned)rand();
++
++  do_write(ats_register_ptr, (unsigned long)ats_mem_addr, UNTRANSLATED, value, 4); // 8 bytes
++
++
++  // Okay, lets sift through the results
++  if (value[0] != buffer[0]) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Host readback %08X for [0], expected %08X\n", __FILE__, __LINE__, ver, buffer[0], value[0]);
++    return -1;
++  }
++  if (value[1] == buffer[1]) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Host readback %08X for [1], expected %08X\n", __FILE__, __LINE__, ver, buffer[1], value[1]);
++    return -1;
++  }
++
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/7_write-ut-u32-rb-x4/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/7_write-ut-u32-rb-x4/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/7_write-ut-u32-rb-x4/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/7_write-ut-u32-rb-x4/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := write-ut-u32-rb-x4
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/7_write-ut-u32-rb-x4/write-ut-u32-rb-x4.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/7_write-ut-u32-rb-x4/write-ut-u32-rb-x4.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/7_write-ut-u32-rb-x4/write-ut-u32-rb-x4.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/7_write-ut-u32-rb-x4/write-ut-u32-rb-x4.c	2021-03-05 08:27:28.000000000 -0600
+@@ -0,0 +1,72 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++
++#include <time.h>
++#include <stdlib.h>
++
++int main(int argv, char ** argc) {
++
++  volatile void *ats_mem_addr;
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++    
++  ats_mem_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!ats_mem_addr) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++
++  unsigned volatile *buffer = (unsigned *)ats_mem_addr;
++
++  srand(time(NULL));
++
++  for (int i=0; i<4; i++)
++    buffer[i] = (unsigned)rand();
++  
++  for (int i=0;i<4; i++) {
++    unsigned value = rand();
++    do_write(ats_register_ptr, ((unsigned long)ats_mem_addr)+sizeof(unsigned)*i, UNTRANSLATED, &value, 4);
++
++    unsigned long rb = 0x23;
++    rb = untranslated_read(ats_register_ptr, ((unsigned long)ats_mem_addr)+sizeof(unsigned)*i);
++    if ((rb & 0xffffffff) != value) {
++      printf("FAIL: %s LINE %d: API VERSION %08X: MB Expected %08X, readback %08lX\n", __FILE__, __LINE__, ver, value, rb & 0xffffffff);
++      return -1;
++    }
++  }
++
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/8_write-ut-u32-hostrb-x4/Makefile dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/8_write-ut-u32-hostrb-x4/Makefile
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/8_write-ut-u32-hostrb-x4/Makefile	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/8_write-ut-u32-hostrb-x4/Makefile	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,23 @@
++
++EXECUTABLE_NAME := write-ut-u32-hostrb-x4
++
++APP_OBJS := obj/${EXECUTABLE_NAME}.o
++
++INCLUDES := -I../inc -I../../driver/include
++
++CFLAGS += ${INCLUDES} -g -O0
++
++all : clean ${EXECUTABLE_NAME}
++
++obj :
++	mkdir -p obj
++
++obj/%.o : %.c | obj
++	$(CC) -c ${CFLAGS} -O0 -o $@  -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE  -D_AIO_AIX_SOURCE $<
++
++
++${EXECUTABLE_NAME} : ${APP_OBJS}
++	$(CC) -o ${EXECUTABLE_NAME} -O0 ${APP_OBJS}   -pthread -lrt -laio 
++
++clean:
++	@rm -f obj/*.o ${EXECUTABLE_NAME} 
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/8_write-ut-u32-hostrb-x4/write-ut-u32-hostrb-x4.c dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/8_write-ut-u32-hostrb-x4/write-ut-u32-hostrb-x4.c
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/8_write-ut-u32-hostrb-x4/write-ut-u32-hostrb-x4.c	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/8_write-ut-u32-hostrb-x4/write-ut-u32-hostrb-x4.c	2021-03-05 08:27:48.000000000 -0600
+@@ -0,0 +1,69 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#include "ats.h"
++
++#include <time.h>
++#include <stdlib.h>
++
++int main(int argv, char ** argc) {
++
++  volatile void *ats_mem_addr;
++
++  int xfd_driver_fd;
++
++  void *ats_csr_addr;
++  void *qdma_csr_addr;
++  char * ats_register_ptr;
++  char * qdma_register_ptr;
++    
++  off_t ATS_CSR_OFFSET;
++  off_t ATS_QDMA_OFFSET;
++  off_t ALLOC_OFFSET;
++
++  open_driver(&xfd_driver_fd, &ATS_CSR_OFFSET, &ATS_QDMA_OFFSET, &ALLOC_OFFSET, &ats_csr_addr, &qdma_csr_addr); // Sets up pointers to CSRs
++  ats_register_ptr = (char *)ats_csr_addr;
++  qdma_register_ptr = (char *)qdma_csr_addr;
++
++  unsigned ver = read_csr(ats_register_ptr, ATS_API_VERSION);
++    
++  ats_mem_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++  if (!ats_mem_addr) {
++    printf("FAIL: %s LINE %d: API VERSION %08X: Cannot map an ATS buffer\n", __FILE__, __LINE__, ver);
++    return -1;
++  }
++
++  unsigned volatile *buffer = (unsigned *)ats_mem_addr;
++
++  srand(time(NULL));
++
++  for (int i=0; i<4; i++)
++    buffer[i] = (unsigned)rand();
++  
++  for (int i=0;i<4; i++) {
++    unsigned value = rand();
++    do_write(ats_register_ptr, ((unsigned long)ats_mem_addr)+sizeof(unsigned)*i, UNTRANSLATED, &value, 4);
++
++    if (buffer[i] != value) {
++      printf("FAIL: %s LINE %d: API VERSION %08X: Expected %08X, host readback %08X\n", __FILE__, __LINE__, ver, value, buffer[1]);
++      return -1;
++    }
++  }
++  printf("PASS: %s: API VERSION %08X\n", __FILE__, ver);
++  
++  return 0;
++  
++};
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/inc/ats.h dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/inc/ats.h
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/inc/ats.h	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/inc/ats.h	2021-03-05 08:28:18.000000000 -0600
+@@ -0,0 +1,421 @@
++/**
++* Copyright (C) 2021 Xilinx, Inc
++*
++* Licensed under the Apache License, Version 2.0 (the "License"). You may
++* not use this file except in compliance with the License. A copy of the
++* License is located at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++* WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++* License for the specific language governing permissions and limitations
++* under the License.
++*/
++
++#ifndef ATS_H_INCLUDED
++#define ATS_H_INCLUDED
++
++#include <xfd_ioctl.h>
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <err.h>
++#include <errno.h>
++
++#include <sys/mman.h>
++
++#include <sys/types.h>
++#include <unistd.h>
++
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++
++// BYTE ADDRESSES OF CSRS
++
++#define VA_LO        0x00
++#define VA_HI        0x04
++#define ATS_MODE_CSR 0x08
++#define PA_LO        0x0C
++#define PA_HI        0x10
++#define HOST_BUFF_LO 0x14
++#define HOST_BUFF_HI 0x18
++#define AT_MODE_CSR  0x24
++#define LEN_CSR      0x28
++
++#define Q_USAGE        0x30
++#define Q_ID           0x34
++
++#define ATS_API_VERSION      0x38
++
++#define Q_CSR          0x40
++#define Q_CSR_RANGE    0x20
++#define Q_READ_PTR_LO  0x00
++#define Q_READ_PTR_HI  0x04
++#define Q_WRITE_PTR_LO 0x08
++#define Q_WRITE_PTR_HI 0x0C
++#define Q_DOORBELL_PTR_LO 0x10
++#define Q_DOORBELL_PTR_HI 0x14
++#define Q_MEMORY_LO    0x18
++#define Q_MEMORY_HI    0x1C
++
++#define WRITE_DATA_CSR         0x100
++
++
++// OPCODES for ATS MB
++#define RESET 0x0
++#define ADDRESS_TRANSLATION_REQUEST 0x2
++#define READ_REQUEST 0x4
++#define WRITE_REQUEST 0x6
++#define PATTERN_WRITE_REQUEST 0x8
++#define QUEUE_CREATE 0x10
++#define QUEUE_DESTROY 0x11
++
++
++#define UNTRANSLATED         0b00
++#define TRANSLATION_REQUEST  0b01
++#define TRANSLATED           0b10
++
++
++//#define ATS_CSR_OFFSET 0x0
++#define GFP_OFFSET 0x10000
++
++
++
++// QDMA
++
++#define QDMA_CONFIG_BLOCK_IDENTIFIER 0x00
++#define QDMA_CONFIG_BLOCK_SCRATCH    0x80
++
++/*static int xfd_driver_fd;
++
++static volatile void *ats_csr_addr;
++static volatile void *qdma_csr_addr;
++static char * ats_register_ptr;
++static char * qdma_register_ptr;
++  
++static off_t ATS_CSR_OFFSET;
++static off_t ATS_QDMA_OFFSET;
++static off_t ALLOC_OFFSET;
++*/
++
++/*
++
++// This is a terrible idea, we should not use globals ...
++
++int xfd_driver_fd;
++
++volatile void *ats_csr_addr;
++volatile void *qdma_csr_addr;
++char * ats_register_ptr;
++char * qdma_register_ptr;
++  
++off_t ATS_CSR_OFFSET;
++off_t ATS_QDMA_OFFSET;
++off_t ALLOC_OFFSET;
++*/
++
++// Some compilers grumble if you don't have prototypes
++int retrieve_mmio_offsets(int, off_t *, off_t *, off_t *);
++void write_csr(char *, unsigned, unsigned);
++void write_csr64(char *, unsigned, unsigned long);
++unsigned read_csr(char *, unsigned);
++unsigned long read_csr64(char *, unsigned);
++void do_address_transalation(char *, unsigned long);
++unsigned long do_write(char*, unsigned long, unsigned, unsigned *, unsigned);
++unsigned long do_read(char *, unsigned long, unsigned); 
++unsigned long do_pattern_write(char*, unsigned long, unsigned);
++unsigned long untranslated_read(char *, unsigned long);
++unsigned long translated_read(char *, unsigned long);
++void setup_qdma(char *, char *, int, off_t);
++int open_driver(int *, off_t *, off_t *, off_t *, void **, void **) ;
++
++
++
++
++
++int retrieve_mmio_offsets(int xfd_driver_fd, off_t * csr_offset, off_t * qdma_offset, off_t * alloc_offset) {
++  struct xfd_ioctl_get_bar_size bar_size_cmd;
++
++  off_t offset = 0;
++
++  *qdma_offset = offset;
++
++  bar_size_cmd.bar = 0;
++  ioctl(xfd_driver_fd, XFD_IOCTL_BAR_SIZE, &bar_size_cmd);
++  if (bar_size_cmd.size < 0) {
++    printf("size is %d\n", bar_size_cmd.size);
++    return -1;
++  }
++  offset  += bar_size_cmd.size;
++
++  *csr_offset = offset;
++
++  bar_size_cmd.bar = 2;
++  ioctl(xfd_driver_fd, XFD_IOCTL_BAR_SIZE, &bar_size_cmd);
++
++  if (bar_size_cmd.size < 0) {
++    printf("size is %d\n", bar_size_cmd.size);
++    return -1;
++  }
++  offset += bar_size_cmd.size;
++
++  *alloc_offset = offset;
++
++  return 0;
++}
++
++
++/*
++* We can add barriers if we like
++*/
++
++void write_csr(char * register_ptr, unsigned reg_byte_offset, unsigned val) {
++  *(unsigned *)(register_ptr + reg_byte_offset) = val;
++}
++
++void write_csr64(char * register_ptr, unsigned reg_byte_offset, unsigned long lval) {
++  unsigned lo_val  = (unsigned)lval;
++  unsigned hi_val  = (unsigned)(((unsigned long)lval) >> 32); 
++  write_csr(register_ptr, reg_byte_offset, lo_val);
++
++  unsigned rb = read_csr(register_ptr, reg_byte_offset);
++  write_csr(register_ptr, reg_byte_offset+sizeof(unsigned), hi_val);
++}
++
++unsigned read_csr(char * register_ptr, unsigned reg_byte_offset) {
++  return *(unsigned *)(register_ptr + reg_byte_offset);
++}
++
++unsigned long read_csr64(char * register_ptr, unsigned reg_offset) {
++  unsigned lo_val;
++  unsigned hi_val;
++  unsigned long val;
++  lo_val = read_csr(register_ptr, reg_offset);
++  hi_val = read_csr(register_ptr, reg_offset+sizeof(unsigned));
++  val  = (((unsigned long)hi_val) << 32); 
++  val +=  ((unsigned long)lo_val); 
++  return val;
++}
++
++void do_address_transalation(char * register_ptr, unsigned long addr) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  write_csr(register_ptr, VA_LO, addr_lo);
++  write_csr(register_ptr, VA_HI, addr_hi);
++  write_csr(register_ptr, AT_MODE_CSR, TRANSLATION_REQUEST);
++  write_csr(register_ptr, LEN_CSR, 0x8); 
++  write_csr(register_ptr, ATS_MODE_CSR, ADDRESS_TRANSLATION_REQUEST);
++ 
++  // Spin on step counter no longer being 2
++  unsigned step = ADDRESS_TRANSLATION_REQUEST;
++
++  while (step == ADDRESS_TRANSLATION_REQUEST)
++    step = read_csr(register_ptr, ATS_MODE_CSR);
++
++  // This is all we can do, we can't return anything to say whether it worked or anything
++
++}
++
++unsigned long do_pattern_write(char * register_ptr, unsigned long addr, unsigned data_len_bytes) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  write_csr(register_ptr, VA_LO, addr_lo);
++  write_csr(register_ptr, VA_HI, addr_hi);
++  write_csr(register_ptr, AT_MODE_CSR, UNTRANSLATED);
++  write_csr(register_ptr, LEN_CSR, data_len_bytes);
++
++  write_csr(register_ptr, ATS_MODE_CSR, PATTERN_WRITE_REQUEST);
++
++  // Spin on step counter not being 6
++  // We can't check on it being 7 because we might go straight to 1 ...  
++  
++  unsigned step = PATTERN_WRITE_REQUEST;
++  while (step == PATTERN_WRITE_REQUEST)
++    step = read_csr(register_ptr, ATS_MODE_CSR);
++  return(0);
++
++}
++
++unsigned long do_write(char* register_ptr, unsigned long addr, unsigned at_mode, unsigned *data, unsigned data_len_bytes) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  write_csr(register_ptr, VA_LO, addr_lo);
++  write_csr(register_ptr, VA_HI, addr_hi);
++  write_csr(register_ptr, AT_MODE_CSR, at_mode);
++  write_csr(register_ptr, LEN_CSR, data_len_bytes);
++
++  // Now we want to write the data, but how much?
++  unsigned data_len_dwords = data_len_bytes / 4;
++  if (data_len_bytes % 4)
++    data_len_dwords++;
++
++  for (unsigned d=0;d<data_len_dwords;d++) {
++    write_csr(register_ptr, WRITE_DATA_CSR+d*sizeof(unsigned), data[d]);
++  }
++  write_csr(register_ptr, ATS_MODE_CSR, WRITE_REQUEST);
++
++  // Spin on step counter not being 6
++  // We can't check on it being 7 because we might go straight to 1 ...  
++  
++  unsigned step = WRITE_REQUEST;
++  while (step == WRITE_REQUEST)
++    step = read_csr(register_ptr, ATS_MODE_CSR);
++  return(0);
++
++}
++
++
++
++unsigned long do_read(char * register_ptr, unsigned long addr, unsigned at_mode) {
++  unsigned addr_lo = (unsigned)addr;
++  unsigned addr_hi = (unsigned)(addr >> 32);
++
++  write_csr(register_ptr, VA_LO, addr_lo);
++  write_csr(register_ptr, VA_HI, addr_hi);
++  write_csr(register_ptr, AT_MODE_CSR, at_mode);
++  write_csr(register_ptr, LEN_CSR, 0x20);
++  write_csr(register_ptr, ATS_MODE_CSR, READ_REQUEST);
++ 
++  // Spin on step counter no longer being 4
++  unsigned step = READ_REQUEST;
++
++  while (step == READ_REQUEST)
++    step = read_csr(register_ptr, ATS_MODE_CSR);
++
++  unsigned val_lo, val_hi;
++
++  val_hi = read_csr(register_ptr, HOST_BUFF_HI);
++  val_lo = read_csr(register_ptr, HOST_BUFF_LO);
++
++  unsigned long to_return = (unsigned long)val_lo;
++  to_return |= ((unsigned long)val_hi) << 32;
++  return(to_return);
++
++}
++
++
++unsigned long untranslated_read(char * register_ptr, unsigned long addr) {
++
++  return(do_read(register_ptr, addr, UNTRANSLATED));
++}
++
++unsigned long translated_read(char * register_ptr, unsigned long addr) {
++
++  return(do_read(register_ptr, addr, TRANSLATED));
++}
++
++void setup_qdma(char *qdma_csr, char *ats_register_ptr, int xfd_driver_fd, off_t ALLOC_OFFSET) {
++
++  // First read the scratch register in the QDMA to see if we've already done this
++
++  unsigned scratch = read_csr(qdma_csr, 0x80);
++  //printf("Scratch is %08X, in setup code\n", scratch);
++  if (scratch != 0xedd1e) {  // Eddie lives forever in our code
++    unsigned version = read_csr(ats_register_ptr, ATS_API_VERSION);
++
++    //printf("ATS API VERSION %08X, scratch is %08X, setting up QDMA\n", version, scratch);
++    for (int r=0x204; r<=0x240; r+=0x4)
++      write_csr(qdma_csr, r, 0x10);         // Initialize all ring size to some value
++
++    write_csr(qdma_csr, 0x400, 0x00100000); // Set up 16 queues
++    write_csr(qdma_csr, 0x1204, 0x00000001); // Setting run bit in H2C MM engine
++    write_csr(qdma_csr, 0x1004, 0x00000001); // Setting run bit in C2H MM engine
++    for (int r=0x824; r<=0x840; r+=0x4) 
++      write_csr(qdma_csr, r, 0xFFFFFFFF);    // Setting CTX mask
++    write_csr(qdma_csr, 0x0AB0, 0x00001000); // Programming C2H DSC buffer_
++
++    // C2H CTXT DATA and CMD    
++    write_csr(qdma_csr, 0x0804, 0x00000000); 
++    write_csr(qdma_csr, 0x0808, 0x00141007); 
++    write_csr(qdma_csr, 0x080C, 0x00002000); 
++    write_csr(qdma_csr, 0x0810, 0x00000000); 
++    write_csr(qdma_csr, 0x0844, 0x00000120); 
++
++    // Completion CTXT DATA and CMD    
++    write_csr(qdma_csr, 0x0804, 0x80000005); 
++    write_csr(qdma_csr, 0x0808, 0x000000C0); 
++    write_csr(qdma_csr, 0x080C, 0x00000000); 
++    write_csr(qdma_csr, 0x0810, 0x10000000); 
++    write_csr(qdma_csr, 0x0814, 0x00040040); 
++    write_csr(qdma_csr, 0x0818, 0x00000000); 
++    write_csr(qdma_csr, 0x081C, 0x00000000); 
++    write_csr(qdma_csr, 0x0820, 0x00000000); 
++    write_csr(qdma_csr, 0x0844, 0x0000012C); 
++
++    write_csr(qdma_csr, 0x1802C, 0x09000000); // Update CIDX 0x00 for CMPT context
++
++    // Prefetch CTXT DATA and CMD    
++    write_csr(qdma_csr, 0x0804, 0x00000001); 
++    write_csr(qdma_csr, 0x0808, 0x00002000); 
++    write_csr(qdma_csr, 0x080C, 0x00000000); 
++    write_csr(qdma_csr, 0x0810, 0x00000000); 
++    write_csr(qdma_csr, 0x0814, 0x00000000); 
++    write_csr(qdma_csr, 0x0818, 0x00000000); 
++    write_csr(qdma_csr, 0x081C, 0x00000000); 
++    write_csr(qdma_csr, 0x0820, 0x00000000); 
++    write_csr(qdma_csr, 0x0844, 0x0000012E); 
++
++    // We now do a sacrifical pair of reads to clear out the pipeline
++    // todo: Make this unnecessary
++
++    volatile void *ats_mem_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , xfd_driver_fd, ALLOC_OFFSET);
++    if (!ats_mem_addr) {
++      printf("ERROR : Driver cannot map the memory in %s on line %d\n", __FILE__, __LINE__);
++      return;
++    }
++
++    unsigned *buffer = (unsigned *)ats_mem_addr;
++
++    unsigned long first = untranslated_read(ats_register_ptr, (unsigned long)buffer);
++    unsigned long second = untranslated_read(ats_register_ptr, (unsigned long)buffer);
++
++    write_csr(ats_register_ptr, 0x0, 1234);
++    write_csr(qdma_csr, 0x80, 0xedd1e);
++
++
++    
++  }
++
++}
++
++int open_driver(int *xfd_driver_fd, off_t *ATS_CSR_OFFSET, off_t *ATS_QDMA_OFFSET, off_t *ALLOC_OFFSET, 
++    void **ats_csr_addr, void **qdma_csr_addr) {
++
++    *xfd_driver_fd = open("/dev/xfd", O_RDWR);
++    if (xfd_driver_fd < 0)  {
++      printf("FAIL: %s LINE %d: Could not open /dev/xfd, it is %d\n", __FILE__, __LINE__, *xfd_driver_fd);
++    return -1;
++  }
++  if ( retrieve_mmio_offsets(*xfd_driver_fd, ATS_CSR_OFFSET, ATS_QDMA_OFFSET, ALLOC_OFFSET) ) {
++    // ioctls failed... exit.
++    printf("FAIL: %s LINE %d: Could not retrieve MMIO offsets from driver\n", __FILE__, __LINE__);
++    return -1;
++  }
++
++  *ats_csr_addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,  MAP_SHARED , *xfd_driver_fd, *ATS_CSR_OFFSET);
++  if (!*ats_csr_addr) {
++    printf("FAIL: %s LINE %d: Could not mmap ATS CSRs\n", __FILE__, __LINE__);
++    return -1;
++  }
++
++  *qdma_csr_addr = mmap(NULL, 0x40000, PROT_READ | PROT_WRITE,  MAP_SHARED , *xfd_driver_fd, *ATS_QDMA_OFFSET);
++  if (!*qdma_csr_addr) {
++    printf("FAIL: %s LINE %d: Could not mmap QDMA CSRs\n", __FILE__, __LINE__);
++    return -1;
++  }
++
++  char *ats_register_ptr = (char *)*ats_csr_addr;
++  char *qdma_register_ptr = (char *)*qdma_csr_addr;
++
++  setup_qdma(qdma_register_ptr, ats_register_ptr, *xfd_driver_fd, *ATS_QDMA_OFFSET);
++  return 0;
++}
++
++#endif
+diff -ruN dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/run_all.sh dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/run_all.sh
+--- dma_ip_drivers-2020.1/QDMA/linux-kernel/tests/run_all.sh	1969-12-31 18:00:00.000000000 -0600
++++ dma_ip_drivers-2020.1_ats/QDMA/linux-kernel/tests/run_all.sh	2021-03-05 07:55:02.000000000 -0600
+@@ -0,0 +1,10 @@
++#!/bin/bash
++
++for i in ./[0-9]*_*; do
++    cd $i
++    make clean > /dev/null
++    make > /dev/null
++    j=$(echo $i | cut -d "_" -f2-)
++    ./$j
++    cd ..
++done

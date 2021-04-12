@@ -1,0 +1,3 @@
+# U280 Config File Directory
+
+The u280_config_file directory contains "design_1_wrapper.bit", which is a prebuilt FPGA configuration bitstream for the Alveo U280.
